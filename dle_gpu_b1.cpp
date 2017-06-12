@@ -210,7 +210,9 @@ int main(int argc, char* argv[]) {
                           - gamma * cov_bwd_bwd * gamma.transpose();
     // ... from Cholesky decomposition
     kappa = Eigen::LLT<Eigen::MatrixXf>(kappa).matrixL();
-    // mass correction for drift
+    // mass correction for drift from
+    // m_ii = K_ii^2 / (2kT (gamma_ii + 1))  and
+    // kT = 38/300 T
     Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
                                                 , n_dim);
     for (unsigned int j=0; j < n_dim; ++j) {
