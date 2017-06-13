@@ -103,7 +103,6 @@ covariance(std::vector<std::vector<float>> v1
   return 0.5 * (cov + cov.transpose());
 }
 
-
 std::vector<float>
 propagate(std::vector<float> position
         , std::vector<float> prev_position
@@ -129,5 +128,54 @@ propagate(std::vector<float> position
     new_position[i] = pos_new(i);
   }
   return new_position;
+}
+
+void
+write_stats_header(std::ostream& fh
+                 , unsigned int n_dim
+                 , std::string cmdline) {
+  fh << "# " << cmdline << std::endl;
+  fh << "#";
+  for (unsigned int i=0; i < n_dim; ++i) {
+    fh << " f_" << i+1;
+  }
+  for (unsigned int i=0; i < n_dim; ++i) {
+    for (unsigned int j=0; j < n_dim; ++j) {
+      fh << " g_" << i+1 << "_" << j+1;
+    }
+  }
+  for (unsigned int i=0; i < n_dim; ++i) {
+    for (unsigned int j=0; j <= i; ++j) {
+      fh << " k_" << i+1 << "_" << j+1;
+    }
+  }
+  fh << " pop" << std::endl;
+}
+
+void
+write_stats(std::ostream& fh
+          , const Eigen::VectorXf& f
+          , const Eigen::MatrixXf& gamma
+          , const Eigen::MatrixXf& kappa
+          , unsigned int n_neighbors) {
+  unsigned int n_dim = f.size();
+  // write drift
+  for (unsigned int i=0; i < n_dim; ++i) {
+    fh << " " << f(i);
+  }
+  // write friction
+  for (unsigned int i=0; i < n_dim; ++i) {
+    for (unsigned int j=0; j < n_dim; ++j) {
+      fh << " " << gamma(i,j);
+    }
+  }
+  // write diffusion (lower triangle of matrix)
+  for (unsigned int i=0; i < n_dim; ++i) {
+    for (unsigned int j=0; j <= i; ++j) {
+      fh << " " << kappa(i,j);
+    }
+  }
+  // write neighbor populations
+  fh << n_neighbors << std::endl;
 }
 

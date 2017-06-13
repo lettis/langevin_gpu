@@ -48,4 +48,13 @@ col_min_max(const std::vector<std::vector<float>>& coords) {
 }
 
 
+std::string
+join_args(int argc
+        , char** argv) {
+  std::string s = "";
+  for (int i=0; i < argc; ++i) {
+    s += std::string(argv[i]);
+  }
+  return s;
+}
 

@@ -22,6 +22,9 @@ sum1_normalized(const std::vector<NUM>& pops);
 std::vector<std::pair<float, float>>
 col_min_max(const std::vector<std::vector<float>>& coords);
 
+std::string
+join_args(int argc
+        , char** argv);
 
 //// template implementations
 

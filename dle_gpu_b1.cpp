@@ -59,23 +59,29 @@ int main(int argc, char* argv[]) {
      "input (required): defines 'futures' of frames, i.e. has follower or not")
     ("free-energies,F", b_po::value<std::string>()->required(),
      "input (required): reference per-frame free energies.")
+    ("length,L", b_po::value<unsigned int>()->required(),
+     "input (required): length of simulated trajectory")
+    ("radius,r", b_po::value<float>()->required(),
+     "input (required): radius for probability integration.")
+    // options
     ("dx,x", b_po::value<float>()->default_value(0.0),
      "input           : dx per dimension of numerical"
      " differentiation (default: compute from radius)")
-    ("radius,r", b_po::value<float>()->required(),
-     "input (required): radius for probability integration.")
     ("seed,I", b_po::value<float>()->default_value(0.0),
      "input           : set seed for random number generator"
      " (default: 0, i.e. generate seed)")
-    // options
     ("output,o", b_po::value<std::string>()->default_value(""),
      "output:           the sampled coordinates"
      " default: stdout.")
-    ("length,L", b_po::value<unsigned int>()->required(),
-     "output:           length of simulated trajectory")
+    ("stats,s", b_po::value<std::string>()->default_value(""),
+     "output:           stats like field estimates, neighbor-populations, etc")
     ("temperature,T", b_po::value<unsigned int>()->default_value(300),
      "                  temperature for mass-correction of drift"
                       " (default: 300)")
+    ("dry-run", b_po::bool_switch()->default_value(false),
+     "                  run a 'dry' run for testing purposes: do not propagate"
+                      " new trajectory, but take positions from input and"
+                      " estimate fields")
     ("verbose,v", b_po::bool_switch()->default_value(false),
      "                  give verbose output.")
     ("nthreads,n", b_po::value<int>()->default_value(0),
@@ -123,6 +129,7 @@ int main(int argc, char* argv[]) {
   }
   unsigned int T = args["temperature"].as<unsigned int>();
   unsigned int propagation_length = args["length"].as<unsigned int>();
+  bool is_dry_run = args["dry-run"].as<bool>();
   // random number generator
   float rnd_seed = args["seed"].as<float>();
   std::function<float()>
@@ -161,6 +168,15 @@ int main(int argc, char* argv[]) {
     read_states(args["future"].as<std::string>());
   // prepare output file (or stdout)
   CoordsFile::FilePointer fh_out = CoordsFile::open(fname_out, "w");
+  // prepare stats-output (fields, etc)
+  std::ofstream fh_stats;
+  std::string fname_stats = args["stats"].as<std::string>();
+  if (fname_stats != "") {
+    fh_stats.open(fname_stats);
+    write_stats_header(fh_stats
+                     , n_dim
+                     , join_args(argc, argv));
+  }
   // GPU setup
   unsigned int n_gpus = CUDA::get_num_gpus();
   std::vector<CUDA::GPUSettings> gpu_settings(n_gpus);
@@ -170,7 +186,15 @@ int main(int argc, char* argv[]) {
                                           , ref_coords);
   }
   // initial coordinate: last of input
-  std::vector<float> position = ref_coords.back();
+  std::vector<float> position;
+  if (is_dry_run) {
+    // dry run: recreate fields for given data
+    position = ref_coords[0];
+    propagation_length = ref_coords.size();
+  } else {
+    // the real thing: propagate trajectory starting at end of input
+    position = ref_coords.back();
+  }
   std::vector<float> prev_position = position;
   // sampling loop (langevin propagation):
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
@@ -213,24 +237,32 @@ int main(int argc, char* argv[]) {
     m_inv = 19.0/75.0 * T * m_inv;
     f = m_inv * f;
     // Euler propagation -> new position
-    std::vector<float> new_position = propagate(position
-                                              , prev_position
-                                              , f
-                                              , gamma
-                                              , kappa
-                                              , rnd);
+    std::vector<float> new_position;
+    if (is_dry_run) {
+      new_position = ref_coords[i_frame];
+    } else {
+      new_position = propagate(position
+                             , prev_position
+                             , f
+                             , gamma
+                             , kappa
+                             , rnd);
+    }
     prev_position = position;
     position = new_position;
     // output: position
     fh_out->write(new_position);
-    //TODO: output
-    //output(fields)
+    // output: stats
+    write_stats(fh_stats
+              , f
+              , gamma
+              , kappa
+              , neighbor_ids[0].size());
   }
-
+  // cleanup
   for (unsigned int i_gpu=0; i_gpu < n_gpus; ++i_gpu) {
     clear_gpu(gpu_settings[i_gpu]);
   }
-
   return EXIT_SUCCESS;
 }
 

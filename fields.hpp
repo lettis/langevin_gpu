@@ -56,6 +56,17 @@ propagate(std::vector<float> position
         , Eigen::MatrixXf friction
         , std::function<float()>& rnd);
 
+void
+write_stats_header(std::ostream& fh
+                 , unsigned int n_dim
+                 , std::string cmdline);
+
+void
+write_stats(std::ostream& fh
+          , const Eigen::VectorXf& f
+          , const Eigen::MatrixXf& gamma
+          , const Eigen::MatrixXf& kappa
+          , unsigned int n_neighbors);
 
 //// template implementations
 #include "fields.hxx"
