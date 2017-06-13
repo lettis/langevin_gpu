@@ -41,12 +41,12 @@ namespace CUDA {
   prepare_gpu(int i_gpu
             , unsigned int n_dim
             , const std::vector<std::vector<float>>& ref_coords) {
+    cudaSetDevice(i_gpu);
+    check_error("setting CUDA device");
     GPUSettings gpu;
     gpu.n_frames = ref_coords.size();
     gpu.id = i_gpu;
     gpu.n_dim = n_dim;
-    cudaSetDevice(i_gpu);
-    check_error("setting CUDA device");
     //// reserve memory for reference point (aka 'xs')
     cudaMalloc((void**) &gpu.xs
              , sizeof(float) * n_dim);
@@ -93,24 +93,6 @@ namespace CUDA {
     return (unsigned int) std::ceil(orig / ((float) mult));
   };
 
-  __device__ char
-  dev_is_neighbor(float* s_xs
-                , float* s_coords
-                , unsigned int n_cols
-                , float rad2
-                , unsigned int tid) {
-    float d2 = 0.0f;
-    for (unsigned int j=0; j < n_cols; ++j) {
-      float d = s_coords[tid*n_cols+j] - s_xs[j];
-      d2 += d*d;
-    }
-    if (d2 <= rad2) {
-      return 1;
-    } else {
-      return 0;
-    }
-  }
-
   __global__ void
   neighbors_krnl(float* xs
                , float* ref_coords
@@ -129,7 +111,7 @@ namespace CUDA {
     // locally shared memory for fast access
     // of dx-shifted xs and reference coordinates
     extern __shared__ float smem[];
-    float* s_coords = (float*) smem;
+    float* s_coords = (float*) &smem[0];
     float* s_xs = (float*) &smem[n_cols*BSIZE];
     // read xs to shared mem
     if (tid < n_cols) {
@@ -156,12 +138,17 @@ namespace CUDA {
       }
       // check if is neighbor for different position shifts
       for (unsigned int j_shift=0; j_shift < n_shifts; ++j_shift) {
-        is_neighbor[gid*n_shifts + j_shift] =
-          dev_is_neighbor(&s_xs[j_shift*n_cols]
-                        , &s_coords[tid*n_cols]
-                        , n_cols
-                        , rad2
-                        , tid);
+        float d2 = 0.0f;
+        for (unsigned int k=0; k < n_cols; ++k) {
+                                        //TODO: just k here?
+          float d = s_coords[tid*n_cols+k] - s_xs[j_shift*n_cols+k];
+          d2 += d*d;
+        }
+        if (d2 <= rad2) {
+          is_neighbor[gid*n_shifts + j_shift] = 1;
+        } else {
+          is_neighbor[gid*n_shifts + j_shift] = 0;
+        }
       }
     }
   }
@@ -221,10 +208,10 @@ namespace CUDA {
                , sizeof(char) * n_rows * (2*n_cols+1));
       check_error("is_neighbor init");
       block_rng = min_multiplicator(i_to-i_from, BSIZE);
-      // shared mem for dx-shifted positions (2*n_cols + 1)
-      // and reference coordinates (n_cols * BSIZE)
+      // shared mem for dx-shifted positions [n_cols * (2*n_cols + 1)]
+      // and reference coordinates [n_cols * BSIZE]
       //TODO: check against max. available shared memory!
-      shared_mem_size = sizeof(float) * ((2*n_cols+1) + (n_cols*BSIZE));
+      shared_mem_size = sizeof(float) * n_cols * ((2*n_cols+1) + BSIZE);
       // kernel call
       neighbors_krnl
       <<< block_rng

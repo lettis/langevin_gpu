@@ -75,9 +75,9 @@ int main(int argc, char* argv[]) {
      " default: stdout.")
     ("stats,s", b_po::value<std::string>()->default_value(""),
      "output:           stats like field estimates, neighbor-populations, etc")
-    ("temperature,T", b_po::value<unsigned int>()->default_value(300),
-     "                  temperature for mass-correction of drift"
-                      " (default: 300)")
+//    ("temperature,T", b_po::value<unsigned int>()->default_value(300),
+//     "                  temperature for mass-correction of drift"
+//                      " (default: 300)")
     ("dry-run", b_po::bool_switch()->default_value(false),
      "                  run a 'dry' run for testing purposes: do not propagate"
                       " new trajectory, but take positions from input and"
@@ -127,7 +127,7 @@ int main(int argc, char* argv[]) {
     //TODO better default dx estimate?
     dx = 0.5 * radius;
   }
-  unsigned int T = args["temperature"].as<unsigned int>();
+//  unsigned int T = args["temperature"].as<unsigned int>();
   unsigned int propagation_length = args["length"].as<unsigned int>();
   bool is_dry_run = args["dry-run"].as<bool>();
   // random number generator
@@ -136,13 +136,12 @@ int main(int argc, char* argv[]) {
     rnd = std::bind(std::normal_distribution<double>(0.0, 1.0)
                   , std::mt19937(rnd_seed));
   // input (coordinates)
-  std::string fname_out = args["output"].as<std::string>();
+  std::string fname_in = args["input"].as<std::string>();
   std::vector<std::vector<float>> ref_coords;
   unsigned int n_dim = 0;
   {
-    CoordsFile::FilePointer fh =
-      CoordsFile::open(args["coords"].as<std::string>()
-                     , "r");
+    CoordsFile::FilePointer fh = CoordsFile::open(fname_in
+                                                , "r");
     while ( ! fh->eof()) {
       std::vector<float> buf = fh->next();
       if (buf.size() > 0) {
@@ -167,6 +166,7 @@ int main(int argc, char* argv[]) {
   std::vector<unsigned int> has_future =
     read_states(args["future"].as<std::string>());
   // prepare output file (or stdout)
+  std::string fname_out = args["output"].as<std::string>();
   CoordsFile::FilePointer fh_out = CoordsFile::open(fname_out, "w");
   // prepare stats-output (fields, etc)
   std::ofstream fh_stats;
@@ -198,6 +198,7 @@ int main(int argc, char* argv[]) {
   std::vector<float> prev_position = position;
   // sampling loop (langevin propagation):
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
+    //TODO: check: what if no neighbors?
     std::vector<std::vector<unsigned int>> neighbor_ids =
       neighbors(position
               , rad2
@@ -232,9 +233,8 @@ int main(int argc, char* argv[]) {
     Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
                                                 , n_dim);
     for (unsigned int j=0; j < n_dim; ++j) {
-      m_inv(j,j) = (gamma(j,j)+1.0) / (kappa(j,j)*kappa(j,j));
+      m_inv(j,j) = 0.5 * (kappa(j,j)*kappa(j,j)) / (gamma(j,j)+1.0);
     }
-    m_inv = 19.0/75.0 * T * m_inv;
     f = m_inv * f;
     // Euler propagation -> new position
     std::vector<float> new_position;

@@ -47,12 +47,7 @@ AsciiHandler::AsciiHandler(std::string fname, std::string mode)
   : _eof(false)
   , _mode(mode) {
   if (mode == "r") {
-    if (fname != "") {
-      _ifs.open(fname);
-      _is = &_ifs;
-    } else {
-      _is = &std::cin;
-    }
+    _ifs.open(fname);
   } else if (mode == "w") {
     if (fname != "") {
       _ofs.open(fname);
@@ -68,10 +63,10 @@ AsciiHandler::AsciiHandler(std::string fname, std::string mode)
 
 std::vector<float>
 AsciiHandler::next() {
-  if (_is->good()) {
+  if (_ifs.is_open() && _ifs.good()) {
     std::string s;
-    std::getline((*_is), s);
-    if (_is->good()) {
+    std::getline(_ifs, s);
+    if (_ifs.good()) {
       if (s == "") {
         // skip empty lines
         return this->next();

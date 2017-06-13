@@ -38,6 +38,24 @@ namespace CUDA {
   min_multiplicator(unsigned int orig
                   , unsigned int mult);
 
+
+
+  //TODO: doc
+
+  // shift pattern:
+  //
+  //    0   0   0   0 ...
+  //  +dx   0   0   0
+  //  -dx   0   0   0
+  //    0 +dx   0   0
+  //    0 -dx   0   0
+  //    0   0 +dx   0
+  //    0   0 -dx   0
+  //    0   0   0 +dx
+  //    0   0   0 -dx
+  //    .
+  //    .
+  //    .
   std::vector<char>
   neighbors(const std::vector<float>& xs
           , float rad2

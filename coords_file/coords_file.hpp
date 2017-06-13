@@ -55,7 +55,6 @@ class AsciiHandler : public Handler {
  protected:
   std::ifstream _ifs;
   std::ofstream _ofs;
-  std::istream* _is;
   std::ostream* _os;
   bool _eof;
   std::string _mode;

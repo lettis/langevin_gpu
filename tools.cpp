@@ -53,7 +53,7 @@ join_args(int argc
         , char** argv) {
   std::string s = "";
   for (int i=0; i < argc; ++i) {
-    s += std::string(argv[i]);
+    s += " " + std::string(argv[i]);
   }
   return s;
 }

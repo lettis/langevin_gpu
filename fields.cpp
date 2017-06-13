@@ -1,9 +1,9 @@
 
+#include <iostream>
 #include <algorithm>
 
 #include "fields.hpp"
 
-//TODO: doc: order of shifts, etc.
 std::vector<std::vector<unsigned int>>
 neighbors(std::vector<float> ref_point
         , float rad2
@@ -17,8 +17,8 @@ neighbors(std::vector<float> ref_point
   unsigned int n_dim = gpus[0].n_dim;
   unsigned int n_shifts = 2*n_dim + 1;
   std::vector<std::vector<unsigned int>> neighbors(n_shifts);
-  for (unsigned int j=0; j < n_shifts; ++j) {
-    for (unsigned int i=0; i < n_frames; ++i) {
+  for (unsigned int i=0; i < n_frames; ++i) {
+    for (unsigned int j=0; j < n_shifts; ++j) {
       if (neighbor_matrix[i*n_shifts + j] == 1) {
         neighbors[j].push_back(i);
       }
@@ -60,7 +60,7 @@ drift(std::vector<std::vector<unsigned int>> neighbor_ids
   };
   // compute FE-gradient
   for (unsigned int i=1; i <= n_dim; ++i) {
-    drift(i) = (free_energy(2*i-1) - free_energy(2*i)) / 2 / dx;
+    drift(i-1) = (free_energy(2*i-1) - free_energy(2*i)) / 2 / dx;
   }
   return drift;
 }
@@ -146,7 +146,7 @@ write_stats_header(std::ostream& fh
   }
   for (unsigned int i=0; i < n_dim; ++i) {
     for (unsigned int j=0; j <= i; ++j) {
-      fh << " k_" << i+1 << "_" << j+1;
+      fh << " K_" << i+1 << "_" << j+1;
     }
   }
   fh << " pop" << std::endl;
@@ -176,6 +176,6 @@ write_stats(std::ostream& fh
     }
   }
   // write neighbor populations
-  fh << n_neighbors << std::endl;
+  fh << " " << n_neighbors << std::endl;
 }
 
