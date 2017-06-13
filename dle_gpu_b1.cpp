@@ -38,7 +38,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "coords_file/coords_file.hpp"
 
 #include "tools.hpp"
-#include "tools_io.hpp"
 #include "neighbors_cuda.hpp"
 #include "fields.hpp"
 
@@ -161,14 +160,7 @@ int main(int argc, char* argv[]) {
   std::vector<unsigned int> has_future =
     read_states(args["future"].as<std::string>());
   // prepare output file (or stdout)
-  bool use_stdout;
-  CoordsFile::FilePointer fh_out;
-  if (fname_out == "") {
-    use_stdout = true;
-  } else {
-    use_stdout = false;
-    fh_out = CoordsFile::open(fname_out, "w");
-  }
+  CoordsFile::FilePointer fh_out = CoordsFile::open(fname_out, "w");
   // GPU setup
   unsigned int n_gpus = CUDA::get_num_gpus();
   std::vector<CUDA::GPUSettings> gpu_settings(n_gpus);
@@ -193,9 +185,9 @@ int main(int argc, char* argv[]) {
                                               , has_future);
     }
     // compute drift as gradient of free energies
-    Eigen::VectorXf f_est = drift(neighbor_ids
-                                , fe
-                                , dx);
+    Eigen::VectorXf f = drift(neighbor_ids
+                            , fe
+                            , dx);
     // covariance matrices with forward and backward velocities
     Eigen::MatrixXf cov_fwd_bwd = covariance<true, false>(neighbor_ids[0]
                                                         , ref_coords);
@@ -205,33 +197,33 @@ int main(int argc, char* argv[]) {
                                                        , ref_coords);
     // friction
     Eigen::MatrixXf gamma = -1.0 * (cov_fwd_bwd * cov_bwd_bwd.inverse());
-    // noise amplitude ...
+    // noise amplitude (i.e. diffusion) ...
     Eigen::MatrixXf kappa = cov_fwd_fwd
                           - gamma * cov_bwd_bwd * gamma.transpose();
     // ... from Cholesky decomposition
     kappa = Eigen::LLT<Eigen::MatrixXf>(kappa).matrixL();
-    // mass correction for drift from
-    // m_ii = K_ii^2 / (2kT (gamma_ii + 1))  and
-    // kT = 38/300 T
+    // mass correction for drift;
+    // from  m_ii = kappa_ii^2 / [2kT (gamma_ii + 1)]
+    // and   kT = 38/300 T
     Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
                                                 , n_dim);
     for (unsigned int j=0; j < n_dim; ++j) {
       m_inv(j,j) = (gamma(j,j)+1.0) / (kappa(j,j)*kappa(j,j));
     }
     m_inv = 19.0/75.0 * T * m_inv;
-    f_est = m_inv * f_est;
+    f = m_inv * f;
     // Euler propagation -> new position
     std::vector<float> new_position = propagate(position
                                               , prev_position
-                                              , f_est
+                                              , f
                                               , gamma
                                               , kappa
                                               , rnd);
     prev_position = position;
     position = new_position;
-
+    // output: position
+    fh_out->write(new_position);
     //TODO: output
-    //output(new_position)
     //output(fields)
   }
 

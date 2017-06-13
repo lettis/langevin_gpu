@@ -63,7 +63,7 @@ include_directories (${EIGEN3_INCLUDE_DIR})
 add_subdirectory(coords_file)
 
 
-set(SRCS dle_gpu_b1.cpp tools.cpp tools_io.cpp fields.cpp)
+set(SRCS dle_gpu_b1.cpp tools.cpp fields.cpp)
 
 set(LIBS ${Boost_LIBRARIES} coords_file)
 

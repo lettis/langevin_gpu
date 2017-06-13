@@ -1,26 +1,26 @@
 /*
-Copyright (c) 2015, Florian Sittel (www.lettis.net)
-All rights reserved.
+Copyright (c) 2015, Florian Sittel (www.lettis.net) All rights reserved.
 
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
 
-1. Redistributions of source code must retain the above copyright notice,
-   this list of conditions and the following disclaimer.
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
 
 2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
-EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
-SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
-OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
-TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #include "coords_file.hpp"
 
@@ -47,9 +47,19 @@ AsciiHandler::AsciiHandler(std::string fname, std::string mode)
   : _eof(false)
   , _mode(mode) {
   if (mode == "r") {
-    this->_ifs.open(fname);
+    if (fname != "") {
+      _ifs.open(fname);
+      _is = &_ifs;
+    } else {
+      _is = &std::cin;
+    }
   } else if (mode == "w") {
-    this->_ofs.open(fname);
+    if (fname != "") {
+      _ofs.open(fname);
+      _os = &_ofs;
+    } else {
+      _os = &std::cout;
+    }
   } else {
     std::cerr << "unknown mode: " << mode << std::endl;
     exit(EXIT_FAILURE);
@@ -58,10 +68,10 @@ AsciiHandler::AsciiHandler(std::string fname, std::string mode)
 
 std::vector<float>
 AsciiHandler::next() {
-  if (_ifs.is_open() && _ifs.good()) {
+  if (_is->good()) {
     std::string s;
-    std::getline(_ifs, s);
-    if (_ifs.good()) {
+    std::getline((*_is), s);
+    if (_is->good()) {
       if (s == "") {
         // skip empty lines
         return this->next();
@@ -76,11 +86,11 @@ AsciiHandler::next() {
 
 void
 AsciiHandler::write(std::vector<float> row) {
-  if (_ofs.is_open() && _ofs.good()) {
+  if (_os->good()) {
     for (float f: row) {
-      _ofs << " " << f;
+      (*_os) << " " << f;
     }
-    _ofs << std::endl;
+    (*_os) << std::endl;
   }
 }
 
