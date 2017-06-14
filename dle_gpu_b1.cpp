@@ -244,8 +244,8 @@ int main(int argc, char* argv[]) {
       new_position = propagate(position
                              , prev_position
                              , f
-                             , gamma
                              , kappa
+                             , gamma
                              , rnd);
     }
     prev_position = position;
