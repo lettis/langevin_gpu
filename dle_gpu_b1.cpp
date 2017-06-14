@@ -210,9 +210,9 @@ int main(int argc, char* argv[]) {
                                               , has_future);
     }
     // compute drift as gradient of free energies
-    Eigen::VectorXf f = drift(neighbor_ids
-                            , fe
-                            , dx);
+    Eigen::VectorXf f = -1.0 * drift(neighbor_ids
+                                   , fe
+                                   , dx);
     // covariance matrices with forward and backward velocities
     Eigen::MatrixXf cov_fwd_bwd = covariance<true, false>(neighbor_ids[0]
                                                         , ref_coords);
