@@ -17,8 +17,10 @@ neighbors(std::vector<float> ref_point
   unsigned int n_dim = gpus[0].n_dim;
   unsigned int n_shifts = 2*n_dim + 1;
   std::vector<std::vector<unsigned int>> neighbors(n_shifts);
-  for (unsigned int i=0; i < n_frames; ++i) {
-    for (unsigned int j=0; j < n_shifts; ++j) {
+//TODO: encode neighbor_matrix in col-major order and parallelize
+//      neighbor-id finding
+  for (unsigned int j=0; j < n_shifts; ++j) {
+    for (unsigned int i=0; i < n_frames; ++i) {
       if (neighbor_matrix[i*n_shifts + j] == 1) {
         neighbors[j].push_back(i);
       }
