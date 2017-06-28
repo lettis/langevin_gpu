@@ -31,6 +31,16 @@ drift(std::vector<std::vector<unsigned int>> neighbor_ids
     , std::vector<float> fe
     , float dx);
 
+//! compute drift from trajectory using follow-up frames of neighbors
+//! (i.e. the 'old way'). This is handy if not enough neighbors are
+//! available for numerical gradient estimation.
+//! @returns Eigen::VectorXf with dimensionality of the given space encoding
+//!          the drift.
+Eigen::VectorXf
+drift_from_trajectory(std::vector<unsigned int> neighbor_ids
+                    , std::vector<std::vector<float>> ref_coords
+                    , Eigen::MatrixXf gamma);
+
 //! compute covariance matrix of velocities.
 //! is_forward_velocity == TRUE corresponds to v_fwd = x_{n+1} - x_n,
 //! is_forward_velocity == FALSE corresponds to v_bwd = x_n - x_{n-1}.
@@ -66,7 +76,8 @@ write_stats(std::ostream& fh
           , const Eigen::VectorXf& f
           , const Eigen::MatrixXf& gamma
           , const Eigen::MatrixXf& kappa
-          , unsigned int n_neighbors);
+          , unsigned int n_neighbors
+          , unsigned int rad2_scale);
 
 //// template implementations
 #include "fields.hxx"

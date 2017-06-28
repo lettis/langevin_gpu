@@ -70,6 +70,9 @@ int main(int argc, char* argv[]) {
     ("seed,I", b_po::value<float>()->default_value(0.0),
      "input           : set seed for random number generator"
      " (default: 0, i.e. generate seed)")
+    ("minpop,P", b_po::value<unsigned int>()->default_value(200),
+     "input           : min. number of neighbors for gradient estimation."
+                      " default: 200")
     ("output,o", b_po::value<std::string>()->default_value(""),
      "output:           the sampled coordinates"
      " default: stdout.")
@@ -129,6 +132,7 @@ int main(int argc, char* argv[]) {
   }
 //  unsigned int T = args["temperature"].as<unsigned int>();
   unsigned int propagation_length = args["length"].as<unsigned int>();
+  unsigned int min_pop = args["minpop"].as<unsigned int>();
   bool is_dry_run = args["dry-run"].as<bool>();
   // random number generator
   float rnd_seed = args["seed"].as<float>();
@@ -197,11 +201,11 @@ int main(int argc, char* argv[]) {
   }
   std::vector<float> prev_position = position;
   // sampling loop (langevin propagation):
-  for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
-    //TODO: check: what if no neighbors?
+
+  auto sanitized_neighborhood = [&] (float squared_radius) {
     std::vector<std::vector<unsigned int>> neighbor_ids =
       neighbors(position
-              , rad2
+              , squared_radius
               , dx
               , gpu_settings);
     // remove frames without previous or following neighbor
@@ -209,10 +213,38 @@ int main(int argc, char* argv[]) {
       neighborhood = remove_all_without_history(neighborhood
                                               , has_future);
     }
-    // compute drift as gradient of free energies
-    Eigen::VectorXf f = -1.0 * drift(neighbor_ids
-                                   , fe
-                                   , dx);
+    return neighbor_ids;
+  };
+  for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
+    unsigned int rad2_scale = 1;
+    Eigen::VectorXf f;
+    std::vector<std::vector<unsigned int>> neighbor_ids;
+    neighbor_ids = sanitized_neighborhood(rad2);
+    bool get_drift_from_traj = false;
+    if (neighbor_ids[0].size() < min_pop) {
+      // not enough neighbors? increase radius to get more and estimate
+      // drift from trajectory instead from numerical differentiation.
+      bool not_enough_neighbors_found = true;
+      for (rad2_scale=2; rad2_scale <= 100; ++rad2_scale) {
+        //TODO optimization potential:
+        //     only local neighborhood, no shifts here
+        neighbor_ids = sanitized_neighborhood(rad2_scale * rad2);
+        if (neighbor_ids[0].size() >= min_pop) {
+          not_enough_neighbors_found = false;
+          break;
+        }
+      }
+      if (not_enough_neighbors_found) {
+        std::cerr << "error: even with 1000x bigger squared radius there are "
+                  << "not enough neighbors to go on ("
+                  << neighbor_ids[0].size()
+                  << "). aborting."
+                  << std::endl;
+        exit(EXIT_FAILURE);
+      } else {
+        get_drift_from_traj = true;
+      }
+    }
     // covariance matrices with forward and backward velocities
     Eigen::MatrixXf cov_fwd_bwd = covariance<true, false>(neighbor_ids[0]
                                                         , ref_coords);
@@ -227,15 +259,31 @@ int main(int argc, char* argv[]) {
                           - gamma * cov_bwd_bwd * gamma.transpose();
     // ... from Cholesky decomposition
     kappa = Eigen::LLT<Eigen::MatrixXf>(kappa).matrixL();
-    // mass correction for drift;
-    // from  m_ii = kappa_ii^2 / [2kT (gamma_ii + 1)]
-    // and   kT = 38/300 T
-    Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
-                                                , n_dim);
-    for (unsigned int j=0; j < n_dim; ++j) {
-      m_inv(j,j) = 0.5 * (kappa(j,j)*kappa(j,j)) / (gamma(j,j)+1.0);
+    // drift
+    if (get_drift_from_traj) {
+      // compute drift directly from trajectory.
+      // maybe less accurate than gradient of FEL,
+      // but necessary if few neighbors due to radius rescaling.
+      // no mass-correction needed here, because it's implicitly
+      // given in the coordinates.
+      f = drift_from_trajectory(neighbor_ids[0]
+                              , ref_coords
+                              , gamma);
+    } else {
+      // compute drift as gradient of free energies
+      f = -1.0 * drift(neighbor_ids
+                     , fe
+                     , dx);
+      // mass correction for drift;
+      // from  m_ii = kappa_ii^2 / [2kT (gamma_ii + 1)]
+      // and   kT = 38/300 T
+      Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
+                                                  , n_dim);
+      for (unsigned int j=0; j < n_dim; ++j) {
+        m_inv(j,j) = 0.5 * (kappa(j,j)*kappa(j,j)) / (gamma(j,j)+1.0);
+      }
+      f = m_inv * f;
     }
-    f = m_inv * f;
     // Euler propagation -> new position
     std::vector<float> new_position;
     if (is_dry_run) {
@@ -257,7 +305,8 @@ int main(int argc, char* argv[]) {
               , f
               , gamma
               , kappa
-              , neighbor_ids[0].size());
+              , neighbor_ids[0].size()
+              , rad2_scale);
   }
   // cleanup
   for (unsigned int i_gpu=0; i_gpu < n_gpus; ++i_gpu) {

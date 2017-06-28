@@ -67,6 +67,29 @@ drift(std::vector<std::vector<unsigned int>> neighbor_ids
   return drift;
 }
 
+Eigen::VectorXf
+drift_from_trajectory(std::vector<unsigned int> neighbor_ids
+                    , std::vector<std::vector<float>> ref_coords
+                    , Eigen::MatrixXf gamma) {
+  // f = < x_{n+1} - x_n > + \gamma  < x_n - x_{n-1} >
+  unsigned int n_dim = ref_coords[0].size();
+  Eigen::VectorXf f_forward = Eigen::VectorXf::Zero(n_dim);
+  Eigen::VectorXf f_backward = Eigen::VectorXf::Zero(n_dim);
+  auto to_vec = [&](unsigned int i) -> Eigen::VectorXf {
+    return Eigen::Map<Eigen::VectorXf
+                    , Eigen::Unaligned>(ref_coords[i].data()
+                                      , n_dim);
+
+  };
+  for (unsigned int i: neighbor_ids) {
+    f_forward += to_vec(i+1) - to_vec(i);
+    f_backward += to_vec(i) - to_vec(i-1);
+  }
+  f_forward /= neighbor_ids.size();
+  f_backward /= neighbor_ids.size();
+  return f_forward + gamma * f_backward;
+}
+
 Eigen::MatrixXf
 covariance(std::vector<std::vector<float>> v1
          , std::vector<std::vector<float>> v2) {
@@ -135,7 +158,7 @@ propagate(std::vector<float> position
 void
 write_stats_header(std::ostream& fh
                  , unsigned int n_dim
-                 , std::string cmdline) {
+                 , std::string cmdline) { 
   fh << "# " << cmdline << std::endl;
   fh << "#";
   for (unsigned int i=0; i < n_dim; ++i) {
@@ -151,7 +174,7 @@ write_stats_header(std::ostream& fh
       fh << " K_" << i+1 << "_" << j+1;
     }
   }
-  fh << " pop" << std::endl;
+  fh << " pop rad2_scale" << std::endl;
 }
 
 void
@@ -159,7 +182,8 @@ write_stats(std::ostream& fh
           , const Eigen::VectorXf& f
           , const Eigen::MatrixXf& gamma
           , const Eigen::MatrixXf& kappa
-          , unsigned int n_neighbors) {
+          , unsigned int n_neighbors
+          , unsigned int rad2_scale) {
   unsigned int n_dim = f.size();
   // write drift
   for (unsigned int i=0; i < n_dim; ++i) {
@@ -178,6 +202,7 @@ write_stats(std::ostream& fh
     }
   }
   // write neighbor populations
-  fh << " " << n_neighbors << std::endl;
+  fh << " " << n_neighbors;
+  fh << " " << rad2_scale << std::endl;
 }
 
