@@ -41,6 +41,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "neighbors_cuda.hpp"
 #include "fields.hpp"
 
+
 int main(int argc, char* argv[]) {
   namespace b_po = boost::program_options;
   b_po::variables_map args;
@@ -85,11 +86,10 @@ int main(int argc, char* argv[]) {
      "                  run a 'dry' run for testing purposes: do not propagate"
                       " new trajectory, but take positions from input and"
                       " estimate fields")
+    ("igpu", b_po::value<int>()->default_value(0),
+     "                  index of used GPU (default: 0)")
     ("verbose,v", b_po::bool_switch()->default_value(false),
      "                  give verbose output.")
-    ("nthreads,n", b_po::value<int>()->default_value(0),
-     "                  number of OpenMP threads. default: 0; i.e. use"
-     " OMP_NUM_THREADS env-variable.")
   ;
   // parse cmd arguments           
   try {
@@ -114,15 +114,8 @@ int main(int argc, char* argv[]) {
     std::cout << desc << std::endl;
     return EXIT_SUCCESS;
   }
-  // setup OpenMP
-  int n_threads = 0;
-  if (args.count("nthreads")) {
-    n_threads = args["nthreads"].as<int>();
-  }
-  if (n_threads > 0) {
-    omp_set_num_threads(n_threads);
-  }
   // various parameters
+  int i_gpu = args["igpu"].as<int>();
   float radius = args["radius"].as<float>();
   float rad2 = radius * radius;
   float dx = args["dx"].as<float>();
@@ -133,6 +126,7 @@ int main(int argc, char* argv[]) {
 //  unsigned int T = args["temperature"].as<unsigned int>();
   unsigned int propagation_length = args["length"].as<unsigned int>();
   unsigned int min_pop = args["minpop"].as<unsigned int>();
+  unsigned int max_propagation_retries = 100;
   bool is_dry_run = args["dry-run"].as<bool>();
   // random number generator
   float rnd_seed = args["seed"].as<float>();
@@ -182,12 +176,17 @@ int main(int argc, char* argv[]) {
                      , join_args(argc, argv));
   }
   // GPU setup
-  unsigned int n_gpus = CUDA::get_num_gpus();
-  std::vector<CUDA::GPUSettings> gpu_settings(n_gpus);
-  for (unsigned int i_gpu=0; i_gpu < n_gpus; ++i_gpu) {
-    gpu_settings[i_gpu] = CUDA::prepare_gpu(i_gpu
-                                          , n_dim
-                                          , ref_coords);
+  CUDA::GPUSettings gpu_settings;
+  if (i_gpu < CUDA::get_num_gpus()) {
+    gpu_settings = CUDA::prepare_gpu(i_gpu
+                                   , n_dim
+                                   , ref_coords);
+  } else {
+    std::cerr << "error: no CUDA-enabled GPU with index "
+              << i_gpu
+              << " found"
+              << std::endl;
+    exit(EXIT_FAILURE);
   }
   // initial coordinate: last of input
   std::vector<float> position;
@@ -200,12 +199,12 @@ int main(int argc, char* argv[]) {
     position = ref_coords.back();
   }
   std::vector<float> prev_position = position;
-  // sampling loop (langevin propagation):
 
-  auto sanitized_neighborhood = [&] (float squared_radius) {
+  //// helper function to get neighborhood
+  auto sanitized_neighborhood = [&] (std::vector<float> pos) {
     std::vector<std::vector<unsigned int>> neighbor_ids =
-      neighbors(position
-              , squared_radius
+      neighbors(pos
+              , rad2
               , dx
               , gpu_settings);
     // remove frames without previous or following neighbor
@@ -215,36 +214,12 @@ int main(int argc, char* argv[]) {
     }
     return neighbor_ids;
   };
+
+  // initialize neighborhood
+  std::vector<std::vector<unsigned int>>
+    neighbor_ids = sanitized_neighborhood(position);
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
-    unsigned int rad2_scale = 1;
     Eigen::VectorXf f;
-    std::vector<std::vector<unsigned int>> neighbor_ids;
-    neighbor_ids = sanitized_neighborhood(rad2);
-    bool get_drift_from_traj = false;
-    if (neighbor_ids[0].size() < min_pop) {
-      // not enough neighbors? increase radius to get more and estimate
-      // drift from trajectory instead from numerical differentiation.
-      bool not_enough_neighbors_found = true;
-      for (rad2_scale=2; rad2_scale <= 100; ++rad2_scale) {
-        //TODO optimization potential:
-        //     only local neighborhood, no shifts here
-        neighbor_ids = sanitized_neighborhood(rad2_scale * rad2);
-        if (neighbor_ids[0].size() >= min_pop) {
-          not_enough_neighbors_found = false;
-          break;
-        }
-      }
-      if (not_enough_neighbors_found) {
-        std::cerr << "error: even with 1000x bigger squared radius there are "
-                  << "not enough neighbors to go on ("
-                  << neighbor_ids[0].size()
-                  << "). aborting."
-                  << std::endl;
-        exit(EXIT_FAILURE);
-      } else {
-        get_drift_from_traj = true;
-      }
-    }
     // covariance matrices with forward and backward velocities
     Eigen::MatrixXf cov_fwd_bwd = covariance<true, false>(neighbor_ids[0]
                                                         , ref_coords);
@@ -259,42 +234,49 @@ int main(int argc, char* argv[]) {
                           - gamma * cov_bwd_bwd * gamma.transpose();
     // ... from Cholesky decomposition
     kappa = Eigen::LLT<Eigen::MatrixXf>(kappa).matrixL();
-    // drift
-    if (get_drift_from_traj) {
-      // compute drift directly from trajectory.
-      // maybe less accurate than gradient of FEL,
-      // but necessary if few neighbors due to radius rescaling.
-      // no mass-correction needed here, because it's implicitly
-      // given in the coordinates.
-      f = drift_from_trajectory(neighbor_ids[0]
-                              , ref_coords
-                              , gamma);
-    } else {
-      // compute drift as gradient of free energies
-      f = -1.0 * drift(neighbor_ids
-                     , fe
-                     , dx);
-      // mass correction for drift;
-      // from  m_ii = kappa_ii^2 / [2kT (gamma_ii + 1)]
-      // and   kT = 38/300 T
-      Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
-                                                  , n_dim);
-      for (unsigned int j=0; j < n_dim; ++j) {
-        m_inv(j,j) = 0.5 * (kappa(j,j)*kappa(j,j)) / (gamma(j,j)+1.0);
-      }
-      f = m_inv * f;
+    // compute drift as gradient of free energies
+    f = -1.0 * drift(neighbor_ids
+                   , fe
+                   , dx);
+    // mass correction for drift;
+    // from  m_ii = kappa_ii^2 / [2kT (gamma_ii + 1)]
+    // and   kT = 38/300 T
+    Eigen::MatrixXf m_inv = Eigen::MatrixXf::Zero(n_dim
+                                                , n_dim);
+    for (unsigned int j=0; j < n_dim; ++j) {
+      m_inv(j,j) = 0.5 * (kappa(j,j)*kappa(j,j)) / (gamma(j,j)+1.0);
     }
+    f = m_inv * f;
     // Euler propagation -> new position
     std::vector<float> new_position;
+    unsigned int retries = 0;
     if (is_dry_run) {
       new_position = ref_coords[i_frame];
+      neighbor_ids = sanitized_neighborhood(new_position);
     } else {
-      new_position = propagate(position
-                             , prev_position
-                             , f
-                             , kappa
-                             , gamma
-                             , rnd);
+      bool propagation_failed = true;
+      for (retries=0; retries <= max_propagation_retries; ++retries) {
+        new_position = propagate(position
+                               , prev_position
+                               , f
+                               , kappa
+                               , gamma
+                               , rnd);
+        // calculate neighborhood at new position
+        neighbor_ids = sanitized_neighborhood(new_position);
+        // check: enough neighbors found to further integrate Langevin?
+        if (neighbor_ids[0].size() >= min_pop) {
+          propagation_failed = false;
+          break;
+        }
+      }
+      if (propagation_failed) {
+        std::cerr << "error: unable to propagate to a low-energy region after "
+                  << max_propagation_retries
+                  << " retries. stopping."
+                  << std::endl;
+        exit(EXIT_FAILURE);
+      }
     }
     prev_position = position;
     position = new_position;
@@ -306,12 +288,10 @@ int main(int argc, char* argv[]) {
               , gamma
               , kappa
               , neighbor_ids[0].size()
-              , rad2_scale);
+              , retries);
   }
   // cleanup
-  for (unsigned int i_gpu=0; i_gpu < n_gpus; ++i_gpu) {
-    clear_gpu(gpu_settings[i_gpu]);
-  }
+  CUDA::clear_gpu(gpu_settings);
   return EXIT_SUCCESS;
 }
 

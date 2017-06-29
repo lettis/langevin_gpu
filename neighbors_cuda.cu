@@ -100,14 +100,12 @@ namespace CUDA {
                , float dx
                , char* is_neighbor
                , unsigned int n_rows
-               , unsigned int n_cols
-               , unsigned int i_from
-               , unsigned int i_to) {
+               , unsigned int n_cols) {
     // CUDA-specific indices for block, thread and global
     unsigned int bsize = blockDim.x;
     unsigned int bid = blockIdx.x;
     unsigned int tid = threadIdx.x;
-    unsigned int gid = bid * bsize + tid + i_from;
+    unsigned int gid = bid * bsize + tid;
     // locally shared memory for fast access
     // of dx-shifted xs and reference coordinates
     extern __shared__ float smem[];
@@ -130,7 +128,7 @@ namespace CUDA {
       }
     }
     __syncthreads();
-    if (gid < i_to) {
+    if (gid < n_rows) {
       unsigned int n_shifts = 2*n_cols + 1;
       // read ref coords to shared mem
       for (unsigned int j=0; j < n_cols; ++j) {
@@ -140,7 +138,6 @@ namespace CUDA {
       for (unsigned int j_shift=0; j_shift < n_shifts; ++j_shift) {
         float d2 = 0.0f;
         for (unsigned int k=0; k < n_cols; ++k) {
-                                        //TODO: just k here?
           float d = s_coords[tid*n_cols+k] - s_xs[j_shift*n_cols+k];
           d2 += d*d;
         }
@@ -158,91 +155,51 @@ namespace CUDA {
   neighbors(const std::vector<float>& xs
           , float rad2
           , float dx
-          , const std::vector<GPUSettings>& gpus) {
-    int n_gpus = gpus.size();
-    if (n_gpus == 0) {
-      std::cerr << "error: unable to estimate free energies on GPU(s)."
-                << std::endl
-                << "       no GPUs have been provided."
-                << std::endl;
-      exit(EXIT_FAILURE);
-    }
-    unsigned int n_rows = gpus[0].n_frames;
-    unsigned int n_cols = gpus[0].n_dim;
-    unsigned int gpu_range = n_rows / n_gpus;
-    int i_gpu;
-    unsigned int i_from;
-    unsigned int i_to;
+          , const GPUSettings& gpu) {
+
+    unsigned int n_rows = gpu.n_frames;
+    unsigned int n_cols = gpu.n_dim;
+    std::vector<char> is_neighbor(n_rows*(2*n_cols+1));
+
     unsigned int block_rng;
     unsigned int shared_mem_size;
-    // partial estimates: neighborhood info per GPU
-    std::vector<std::vector<char>>
-      is_neighbor_partial(n_gpus
-                        , std::vector<char>(n_rows * (2*n_cols+1)));
-    //// parallelize over available GPUs
-    #pragma omp parallel for default(none)\
-      private(i_gpu,i_from,i_to,block_rng,shared_mem_size)\
-      firstprivate(rad2,dx,n_gpus,n_rows,n_cols,gpu_range)\
-      shared(xs,gpus,is_neighbor_partial)\
-      num_threads(n_gpus)\
-      schedule(dynamic,1)
-    for (i_gpu=0; i_gpu < n_gpus; ++i_gpu) {
-      cudaSetDevice(i_gpu);
-      check_error("set device");
-      // set ranges for this GPU
-      i_from = i_gpu * gpu_range;
-      if (i_gpu == n_gpus-1) {
-        i_to = n_rows;
-      } else {
-        i_to = (i_gpu+1) * gpu_range;
-      }
-      // copy current position to GPU
-      cudaMemcpy(gpus[i_gpu].xs
-               , xs.data()
-               , sizeof(float) * n_cols
-               , cudaMemcpyHostToDevice);
-      check_error("copy reference point coordinates to device");
-      // initialize is_neighbor to zero
-      cudaMemset(gpus[i_gpu].is_neighbor
-               , 0
-               , sizeof(char) * n_rows * (2*n_cols+1));
-      check_error("is_neighbor init");
-      block_rng = min_multiplicator(i_to-i_from, BSIZE);
-      // shared mem for dx-shifted positions [n_cols * (2*n_cols + 1)]
-      // and reference coordinates [n_cols * BSIZE]
-      //TODO: check against max. available shared memory!
-      shared_mem_size = sizeof(float) * n_cols * ((2*n_cols+1) + BSIZE);
-      // kernel call
-      neighbors_krnl
-      <<< block_rng
-        , BSIZE
-        , shared_mem_size >>> (gpus[i_gpu].xs
-                             , gpus[i_gpu].coords
-                             , rad2
-                             , dx
-                             , gpus[i_gpu].is_neighbor
-                             , n_rows
-                             , n_cols
-                             , i_from
-                             , i_to);
-      cudaDeviceSynchronize();
-      check_error("after kernel call");
-      // retrieve partial results
-      cudaMemcpy(is_neighbor_partial[i_gpu].data()
-               , gpus[i_gpu].is_neighbor
-               , sizeof(char) * n_rows * (2*n_cols+1)
-               , cudaMemcpyDeviceToHost);
-      check_error("copy neighbor estimate from device");
-    }
-    // combine results from all GPUs
-    std::vector<char> is_neighbor = is_neighbor_partial[0];
-    for (unsigned int i_gpu=1; i_gpu < n_gpus; ++i_gpu) {
-      for (unsigned int i=0; i < is_neighbor_partial[i_gpu].size(); ++i) {
-        if (is_neighbor_partial[i_gpu][i] == 1) {
-          is_neighbor[i] = 1;
-        }
-      }
-    }
+    cudaSetDevice(gpu.id);
+    check_error("set device");
+    // copy current position to GPU
+    cudaMemcpy(gpu.xs
+             , xs.data()
+             , sizeof(float) * n_cols
+             , cudaMemcpyHostToDevice);
+    check_error("copy reference point coordinates to device");
+    // initialize is_neighbor to zero
+    cudaMemset(gpu.is_neighbor
+             , 0
+             , sizeof(char) * n_rows * (2*n_cols+1));
+    check_error("is_neighbor init");
+    block_rng = min_multiplicator(n_rows, BSIZE);
+    // shared mem for dx-shifted positions [n_cols * (2*n_cols + 1)]
+    // and reference coordinates [n_cols * BSIZE]
+    //TODO: check against max. available shared memory!
+    shared_mem_size = sizeof(float) * n_cols * ((2*n_cols+1) + BSIZE);
+    // kernel call
+    neighbors_krnl
+    <<< block_rng
+      , BSIZE
+      , shared_mem_size >>> (gpu.xs
+                           , gpu.coords
+                           , rad2
+                           , dx
+                           , gpu.is_neighbor
+                           , n_rows
+                           , n_cols);
+    cudaDeviceSynchronize();
+    check_error("after kernel call");
+    // retrieve partial results
+    cudaMemcpy(is_neighbor.data()
+             , gpu.is_neighbor
+             , sizeof(char) * n_rows * (2*n_cols+1)
+             , cudaMemcpyDeviceToHost);
+    check_error("copy neighbor estimate from device");
     return is_neighbor;
   }
 

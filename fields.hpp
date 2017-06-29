@@ -11,7 +11,7 @@ std::vector<std::vector<unsigned int>>
 neighbors(std::vector<float> ref_point
         , float rad2
         , float dx
-        , std::vector<CUDA::GPUSettings>& gpus);
+        , CUDA::GPUSettings& gpu);
 
 //! remove all frames which have either no past (i.e. are first in trajectory)
 //! or have no future (i.e. are last in trajectory).
@@ -30,16 +30,6 @@ Eigen::VectorXf
 drift(std::vector<std::vector<unsigned int>> neighbor_ids
     , std::vector<float> fe
     , float dx);
-
-//! compute drift from trajectory using follow-up frames of neighbors
-//! (i.e. the 'old way'). This is handy if not enough neighbors are
-//! available for numerical gradient estimation.
-//! @returns Eigen::VectorXf with dimensionality of the given space encoding
-//!          the drift.
-Eigen::VectorXf
-drift_from_trajectory(std::vector<unsigned int> neighbor_ids
-                    , std::vector<std::vector<float>> ref_coords
-                    , Eigen::MatrixXf gamma);
 
 //! compute covariance matrix of velocities.
 //! is_forward_velocity == TRUE corresponds to v_fwd = x_{n+1} - x_n,
@@ -77,7 +67,7 @@ write_stats(std::ostream& fh
           , const Eigen::MatrixXf& gamma
           , const Eigen::MatrixXf& kappa
           , unsigned int n_neighbors
-          , unsigned int rad2_scale);
+          , unsigned int retries);
 
 //// template implementations
 #include "fields.hxx"

@@ -4,21 +4,21 @@
 
 #include "fields.hpp"
 
+
 std::vector<std::vector<unsigned int>>
 neighbors(std::vector<float> ref_point
         , float rad2
         , float dx
-        , std::vector<CUDA::GPUSettings>& gpus) {
+        , CUDA::GPUSettings& gpu) {
   std::vector<char> neighbor_matrix = CUDA::neighbors(ref_point
                                                     , rad2
                                                     , dx
-                                                    , gpus);
-  unsigned int n_frames = gpus[0].n_frames;
-  unsigned int n_dim = gpus[0].n_dim;
+                                                    , gpu);
+  unsigned int n_frames = gpu.n_frames;
+  unsigned int n_dim = gpu.n_dim;
   unsigned int n_shifts = 2*n_dim + 1;
   std::vector<std::vector<unsigned int>> neighbors(n_shifts);
-//TODO: encode neighbor_matrix in col-major order and parallelize
-//      neighbor-id finding
+  //TODO: aggregate neighbor list on GPU?
   for (unsigned int j=0; j < n_shifts; ++j) {
     for (unsigned int i=0; i < n_frames; ++i) {
       if (neighbor_matrix[i*n_shifts + j] == 1) {
@@ -65,29 +65,6 @@ drift(std::vector<std::vector<unsigned int>> neighbor_ids
     drift(i-1) = (free_energy(2*i-1) - free_energy(2*i)) / 2 / dx;
   }
   return drift;
-}
-
-Eigen::VectorXf
-drift_from_trajectory(std::vector<unsigned int> neighbor_ids
-                    , std::vector<std::vector<float>> ref_coords
-                    , Eigen::MatrixXf gamma) {
-  // f = < x_{n+1} - x_n > + \gamma  < x_n - x_{n-1} >
-  unsigned int n_dim = ref_coords[0].size();
-  Eigen::VectorXf f_forward = Eigen::VectorXf::Zero(n_dim);
-  Eigen::VectorXf f_backward = Eigen::VectorXf::Zero(n_dim);
-  auto to_vec = [&](unsigned int i) -> Eigen::VectorXf {
-    return Eigen::Map<Eigen::VectorXf
-                    , Eigen::Unaligned>(ref_coords[i].data()
-                                      , n_dim);
-
-  };
-  for (unsigned int i: neighbor_ids) {
-    f_forward += to_vec(i+1) - to_vec(i);
-    f_backward += to_vec(i) - to_vec(i-1);
-  }
-  f_forward /= neighbor_ids.size();
-  f_backward /= neighbor_ids.size();
-  return f_forward + gamma * f_backward;
 }
 
 Eigen::MatrixXf
@@ -183,7 +160,7 @@ write_stats(std::ostream& fh
           , const Eigen::MatrixXf& gamma
           , const Eigen::MatrixXf& kappa
           , unsigned int n_neighbors
-          , unsigned int rad2_scale) {
+          , unsigned int retries) {
   unsigned int n_dim = f.size();
   // write drift
   for (unsigned int i=0; i < n_dim; ++i) {
@@ -203,6 +180,7 @@ write_stats(std::ostream& fh
   }
   // write neighbor populations
   fh << " " << n_neighbors;
-  fh << " " << rad2_scale << std::endl;
+  // propagation retries
+  fh << " " << retries << std::endl;
 }
 

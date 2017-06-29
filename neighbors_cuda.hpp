@@ -60,7 +60,7 @@ namespace CUDA {
   neighbors(const std::vector<float>& xs
           , float rad2
           , float dx
-          , const std::vector<GPUSettings>& gpus);
+          , const GPUSettings& gpu);
 
 } // end namespace CUDA
 

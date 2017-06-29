@@ -35,10 +35,10 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
   message("using Gnu compiler")
   # use C++ 2011 standard
   set (CMAKE_CXX_FLAGS "-std=c++11")
-  # debugging symbols
-  #set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+  # gprof profiling
+  #set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -pg")
   # gperftool profiling
-  # set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWITHGPERFTOOLS -lprofiler)
+  #set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWITHGPERFTOOLS -lprofiler -g")
   # optimization
   set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
   set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftree-vectorize")
