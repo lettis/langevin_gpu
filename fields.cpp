@@ -4,48 +4,7 @@
 
 #include "fields.hpp"
 
-
-std::vector<std::vector<unsigned int>>
-neighbors(std::vector<float> ref_point
-        , float rad2
-        , float dx
-        , CUDA::GPUSettings& gpu) {
-  std::vector<char> neighbor_matrix = CUDA::neighbors(ref_point
-                                                    , rad2
-                                                    , dx
-                                                    , gpu);
-  unsigned int n_frames = gpu.n_frames;
-  unsigned int n_dim = gpu.n_dim;
-  unsigned int n_shifts = 2*n_dim + 1;
-  std::vector<std::vector<unsigned int>> neighbors(n_shifts);
-  //TODO: aggregate neighbor list on GPU?
-  for (unsigned int j=0; j < n_shifts; ++j) {
-    for (unsigned int i=0; i < n_frames; ++i) {
-      if (neighbor_matrix[i*n_shifts + j] == 1) {
-        neighbors[j].push_back(i);
-      }
-    }
-  }
-  return neighbors;
-}
-
-std::vector<unsigned int>
-remove_all_without_history(std::vector<unsigned int> neighbor_ids
-                         , std::vector<unsigned int> has_future) {
-  unsigned int n_frames = has_future.size();
-  auto frame_has_no_history = [&] (unsigned int i) -> bool {
-    return (i == 0)
-        || (i == n_frames-1)
-        || (has_future[i] == 0)
-        || (has_future[i-1] == 0);
-  };
-  neighbor_ids.erase(std::remove_if(neighbor_ids.begin()
-                                  , neighbor_ids.end()
-                                  , frame_has_no_history)
-                   , neighbor_ids.end());
-  return neighbor_ids;
-}
-
+/* TODO renmove
 Eigen::VectorXf
 drift(std::vector<std::vector<unsigned int>> neighbor_ids
     , std::vector<float> fe
@@ -104,6 +63,7 @@ covariance(std::vector<std::vector<float>> v1
   // (to counter numerical instabilities in the data)
   return 0.5 * (cov + cov.transpose());
 }
+*/
 
 std::vector<float>
 propagate(std::vector<float> position

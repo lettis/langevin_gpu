@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) {
   // input (free energies)
   std::vector<float> fe = read_fe(args["free-energies"].as<std::string>());
   // input (futures)
-  std::vector<unsigned int> has_future =
+  std::vector<char> has_future =
     read_states(args["future"].as<std::string>());
   // prepare output file (or stdout)
   std::string fname_out = args["output"].as<std::string>();
@@ -200,24 +200,27 @@ int main(int argc, char* argv[]) {
   }
   std::vector<float> prev_position = position;
 
-  //// helper function to get neighborhood
-  auto sanitized_neighborhood = [&] (std::vector<float> pos) {
-    std::vector<std::vector<unsigned int>> neighbor_ids =
-      neighbors(pos
-              , rad2
-              , dx
-              , gpu_settings);
-    // remove frames without previous or following neighbor
-    for (std::vector<unsigned int>& neighborhood: neighbor_ids) {
-      neighborhood = remove_all_without_history(neighborhood
-                                              , has_future);
-    }
-    return neighbor_ids;
-  };
+//  //// helper function to get neighborhood
+//  auto sanitized_neighborhood = [&] (std::vector<float> pos) {
+//    std::vector<std::vector<unsigned int>> neighbor_ids =
+//      neighbors(pos
+//              , rad2
+//              , dx
+//              , gpu_settings);
+//    // remove frames without previous or following neighbor
+//    for (std::vector<unsigned int>& neighborhood: neighbor_ids) {
+//      neighborhood = remove_all_without_history(neighborhood
+//                                              , has_future);
+//    }
+//    return neighbor_ids;
+//  };
 
-  // initialize neighborhood
-  std::vector<std::vector<unsigned int>>
-    neighbor_ids = sanitized_neighborhood(position);
+//  // initialize neighborhood
+//  std::vector<std::vector<unsigned int>>
+//    neighbor_ids = sanitized_neighborhood(position);
+
+
+
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
     Eigen::VectorXf f;
     // covariance matrices with forward and backward velocities
