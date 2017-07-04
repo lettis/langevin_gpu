@@ -3,9 +3,11 @@
 #include <string>
 #include <vector>
 
+#include <Eigen/Dense>
 
-std::vector<unsigned int>
-read_states(std::string fname);
+
+std::vector<char>
+read_futures(std::string fname);
 
 std::vector<unsigned int>
 read_pops(std::string fname);
@@ -25,6 +27,16 @@ col_min_max(const std::vector<std::vector<float>>& coords);
 std::string
 join_args(int argc
         , char** argv);
+
+
+Eigen::MatrixXf
+to_eigen_mat(std::vector<float> xs
+           , bool make_symmetric=false);
+
+
+Eigen::VectorXf
+to_eigen_vec(std::vector<float> xs);
+
 
 //// template implementations
 

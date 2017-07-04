@@ -38,8 +38,6 @@ namespace CUDA {
     char* has_future;
     //! free energy estimates for the different shifts [2*n_dim]
     float* shifts_fe;
-    //! drift == grad(fe) [n_dim]
-    float* drift;
     //! means of velocity estimates (forward and backward)  [2*n_dim]
     //! (necessary for cov-mat computation)
     float* v_means;
@@ -55,6 +53,10 @@ namespace CUDA {
   void
   check_error(std::string msg="");
 
+  //! Force thread synchronization and check for error afterwards.
+  void
+  sync_and_check(std::string msg);
+
   int
   get_num_gpus();
 
@@ -68,62 +70,10 @@ namespace CUDA {
   void
   clear_gpu(GPUSettings& settings);
 
-  //! return minimum multiplicator to fulfill: result * mult >= orig
+  //! return minimum number of blocks needed for covering all frames
   unsigned int
-  min_multiplicator(unsigned int orig
-                  , unsigned int mult);
-
-
-  template <typename NUM>
-  __device__ void
-  atomicAddReduce(NUM* result
-                , NUM* value);
-
-
-  //// kernels ///////////
-
-  __global__ void
-  neighbors_krnl(float* xs
-               , float* ref_coords
-               , float rad2
-               , float dx
-               , char* has_future
-               , unsigned int n_rows
-               , unsigned int n_cols
-               , char* is_neighbor);
-
-  __global__ void
-  count_neighbors_krnl(char* is_neighbor
-                     , unsigned int n_frames
-                     , unsigned int n_dim
-                     , unsigned int* n_neighbors);
-
-  __global__ void
-  shifted_fe_sum_krnl(char* is_neighbor
-                    , float* fe
-                    , unsigned int n_frames
-                    , unsigned int n_dim
-                    , float* shifts_fe);
-
-  __global__ void
-  v_means_krnl(char* is_neighbor
-             , float* coords
-             , unsigned int* n_neighbors
-             , unsigned int n_frames
-             , unsigned int n_dim
-             , float* means);
-
-  __global__ void
-  cov_krnl(char* is_neighbor
-         , float* coords
-         , float* v_means
-         , unsigned int n_frames
-         , unsigned int n_dim
-         , unsigned int i 
-         , unsigned int j
-         , bool i_use_forward_velocity
-         , bool j_use_forward_velocity
-         , float* cov);
+  n_blocks(unsigned int n_frames
+         , unsigned int block_size);
 
 
   //// kernel drivers ////////////
@@ -155,15 +105,24 @@ namespace CUDA {
   nq_v_means(GPUSettings& gpu);
 
   void
-  nq_cov(unsigned int i
-       , unsigned int j
-       , bool i_use_forward_velocity
-       , bool j_use_forward_velocity
-       , GPUSettings& gpu);
+  nq_cov(GPUSettings& gpu
+       , bool i_forward
+       , bool j_forward);
+
+
+  //// retrieve results from GPU //////////
+  
+  std::vector<unsigned int>
+  get_n_neighbors(GPUSettings& gpu);
+
+  std::vector<float>
+  get_drift(GPUSettings& gpu
+          , std::vector<unsigned int> n_neighbors
+          , float dx);
+
+  std::vector<float>
+  get_cov(GPUSettings& gpu
+        , std::vector<unsigned int> n_neighbors);
 
 } // end namespace CUDA
-
-
-// template implementations
-#include "neighbors_cuda.hxx"
 

@@ -4,28 +4,8 @@
 
 #include "fields.hpp"
 
-/* TODO renmove
-Eigen::VectorXf
-drift(std::vector<std::vector<unsigned int>> neighbor_ids
-    , std::vector<float> fe
-    , float dx) {
-  unsigned int n_dim = (neighbor_ids.size()-1) / 2;
-  Eigen::VectorXf drift(n_dim);
-  // helper function to compute average free energy for given shift
-  auto free_energy = [&] (unsigned int i_shift) -> float {
-    float sum_fe = 0.0f;
-    for (unsigned int i_neighbor: neighbor_ids[i_shift]) {
-      sum_fe += fe[i_neighbor];
-    }
-    return sum_fe / neighbor_ids[i_shift].size();
-  };
-  // compute FE-gradient
-  for (unsigned int i=1; i <= n_dim; ++i) {
-    drift(i-1) = (free_energy(2*i-1) - free_energy(2*i)) / 2 / dx;
-  }
-  return drift;
-}
 
+/*
 Eigen::MatrixXf
 covariance(std::vector<std::vector<float>> v1
          , std::vector<std::vector<float>> v2) {
@@ -111,7 +91,7 @@ write_stats_header(std::ostream& fh
       fh << " K_" << i+1 << "_" << j+1;
     }
   }
-  fh << " pop rad2_scale" << std::endl;
+  fh << " pop n_retries" << std::endl;
 }
 
 void

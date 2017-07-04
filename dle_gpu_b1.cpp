@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
                       " new trajectory, but take positions from input and"
                       " estimate fields")
     ("igpu", b_po::value<int>()->default_value(0),
-     "                  index of used GPU (default: 0)")
+     "                  index of GPU to use (default: 0)")
     ("verbose,v", b_po::bool_switch()->default_value(false),
      "                  give verbose output.")
   ;
@@ -162,7 +162,7 @@ int main(int argc, char* argv[]) {
   std::vector<float> fe = read_fe(args["free-energies"].as<std::string>());
   // input (futures)
   std::vector<char> has_future =
-    read_states(args["future"].as<std::string>());
+    read_futures(args["future"].as<std::string>());
   // prepare output file (or stdout)
   std::string fname_out = args["output"].as<std::string>();
   CoordsFile::FilePointer fh_out = CoordsFile::open(fname_out, "w");
@@ -180,7 +180,9 @@ int main(int argc, char* argv[]) {
   if (i_gpu < CUDA::get_num_gpus()) {
     gpu_settings = CUDA::prepare_gpu(i_gpu
                                    , n_dim
-                                   , ref_coords);
+                                   , ref_coords
+                                   , has_future
+                                   , fe);
   } else {
     std::cerr << "error: no CUDA-enabled GPU with index "
               << i_gpu
@@ -193,43 +195,47 @@ int main(int argc, char* argv[]) {
   if (is_dry_run) {
     // dry run: recreate fields for given data
     position = ref_coords[0];
-    propagation_length = ref_coords.size();
   } else {
     // the real thing: propagate trajectory starting at end of input
     position = ref_coords.back();
   }
   std::vector<float> prev_position = position;
-
-//  //// helper function to get neighborhood
-//  auto sanitized_neighborhood = [&] (std::vector<float> pos) {
-//    std::vector<std::vector<unsigned int>> neighbor_ids =
-//      neighbors(pos
-//              , rad2
-//              , dx
-//              , gpu_settings);
-//    // remove frames without previous or following neighbor
-//    for (std::vector<unsigned int>& neighborhood: neighbor_ids) {
-//      neighborhood = remove_all_without_history(neighborhood
-//                                              , has_future);
-//    }
-//    return neighbor_ids;
-//  };
-
-//  // initialize neighborhood
-//  std::vector<std::vector<unsigned int>>
-//    neighbor_ids = sanitized_neighborhood(position);
-
-
-
+  // find nearest neighbors at initial position
+  CUDA::nq_neighbors(position
+                   , rad2
+                   , dx
+                   , gpu_settings);
+  std::vector<unsigned int> n_neighbors = CUDA::get_n_neighbors(gpu_settings);
+  //// integrate Langevin dynamics
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
-    Eigen::VectorXf f;
-    // covariance matrices with forward and backward velocities
-    Eigen::MatrixXf cov_fwd_bwd = covariance<true, false>(neighbor_ids[0]
-                                                        , ref_coords);
-    Eigen::MatrixXf cov_bwd_bwd = covariance<false, false>(neighbor_ids[0]
-                                                         , ref_coords);
-    Eigen::MatrixXf cov_fwd_fwd = covariance<true, true>(neighbor_ids[0]
-                                                       , ref_coords);
+    // compute free energy estimates for neighborhoods
+    CUDA::nq_shifted_fe_sum(gpu_settings);
+    // compute local velocities (forward and backward)
+    // for cov-matrix estimation
+    CUDA::nq_v_means(gpu_settings);
+    //// covariance matrices with forward and backward velocities:
+    //// first enqueue ('nq_..') kernel for computation, then retrieve
+    //// results.
+    // forward, backward
+    CUDA::nq_cov(gpu_settings
+               , true
+               , false);
+    Eigen::MatrixXf cov_fwd_bwd = to_eigen_mat(CUDA::get_cov(gpu_settings
+                                                           , n_neighbors));
+    // backward, backward
+    CUDA::nq_cov(gpu_settings
+               , false
+               , false);
+    Eigen::MatrixXf cov_bwd_bwd = to_eigen_mat(CUDA::get_cov(gpu_settings
+                                                           , n_neighbors)
+                                             , true);
+    // forward, forward
+    CUDA::nq_cov(gpu_settings
+               , true
+               , true);
+    Eigen::MatrixXf cov_fwd_fwd = to_eigen_mat(CUDA::get_cov(gpu_settings
+                                                           , n_neighbors)
+                                             , true);
     // friction
     Eigen::MatrixXf gamma = -1.0 * (cov_fwd_bwd * cov_bwd_bwd.inverse());
     // noise amplitude (i.e. diffusion) ...
@@ -238,9 +244,10 @@ int main(int argc, char* argv[]) {
     // ... from Cholesky decomposition
     kappa = Eigen::LLT<Eigen::MatrixXf>(kappa).matrixL();
     // compute drift as gradient of free energies
-    f = -1.0 * drift(neighbor_ids
-                   , fe
-                   , dx);
+    CUDA::nq_shifted_fe_sum(gpu_settings);
+    Eigen::VectorXf f = to_eigen_vec(CUDA::get_drift(gpu_settings
+                                                   , n_neighbors
+                                                   , dx));
     // mass correction for drift;
     // from  m_ii = kappa_ii^2 / [2kT (gamma_ii + 1)]
     // and   kT = 38/300 T
@@ -255,7 +262,12 @@ int main(int argc, char* argv[]) {
     unsigned int retries = 0;
     if (is_dry_run) {
       new_position = ref_coords[i_frame];
-      neighbor_ids = sanitized_neighborhood(new_position);
+      // find neighbors at new position
+      CUDA::nq_neighbors(new_position
+                       , rad2
+                       , dx
+                       , gpu_settings);
+      n_neighbors = CUDA::get_n_neighbors(gpu_settings);
     } else {
       bool propagation_failed = true;
       for (retries=0; retries <= max_propagation_retries; ++retries) {
@@ -265,10 +277,14 @@ int main(int argc, char* argv[]) {
                                , kappa
                                , gamma
                                , rnd);
-        // calculate neighborhood at new position
-        neighbor_ids = sanitized_neighborhood(new_position);
+        // find neighbors at new position
+        CUDA::nq_neighbors(new_position
+                         , rad2
+                         , dx
+                         , gpu_settings);
+        n_neighbors = CUDA::get_n_neighbors(gpu_settings);
         // check: enough neighbors found to further integrate Langevin?
-        if (neighbor_ids[0].size() >= min_pop) {
+        if (n_neighbors[0] >= min_pop) {
           propagation_failed = false;
           break;
         }
@@ -290,7 +306,7 @@ int main(int argc, char* argv[]) {
               , f
               , gamma
               , kappa
-              , neighbor_ids[0].size()
+              , n_neighbors[0]
               , retries);
   }
   // cleanup

@@ -6,9 +6,9 @@
 
 #include "tools.hpp"
 
-std::vector<unsigned int>
-read_states(std::string fname) {
-  return _read_col<unsigned int>(fname);
+std::vector<char>
+read_futures(std::string fname) {
+  return _read_col<char>(fname);
 }
 
 std::vector<unsigned int>
@@ -56,5 +56,38 @@ join_args(int argc
     s += " " + std::string(argv[i]);
   }
   return s;
+}
+
+
+
+
+Eigen::MatrixXf
+to_eigen_mat(std::vector<float> xs
+           , bool make_symmetric) {
+  unsigned int n = std::sqrt(xs.size());
+  Eigen::MatrixXf mat(n, n);
+  for (unsigned int i=0; i < n; ++i) {
+    if (make_symmetric) {
+      for (unsigned int j=0; j <= i; ++j) {
+        mat(i,j) = xs[i*n+j];
+        mat(j,i) = mat(i,j);
+      }
+    } else {
+      for (unsigned int j=0; j < n; ++j) {
+        mat(i,j) = xs[i*n+j];
+      }
+    }
+  }
+  return mat;
+}
+
+Eigen::VectorXf
+to_eigen_vec(std::vector<float> xs) {
+  unsigned int n = xs.size();
+  Eigen::VectorXf vec(n);
+  for (unsigned int i=0; i < n; ++i) {
+    vec(i) = xs[i];
+  }
+  return vec;
 }
 
