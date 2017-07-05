@@ -7,6 +7,7 @@
 #include <vector>
 
 
+namespace Langevin {
 namespace CUDA {
 
   struct GPUSettings {
@@ -124,5 +125,5 @@ namespace CUDA {
   get_cov(GPUSettings& gpu
         , std::vector<unsigned int> n_neighbors);
 
-} // end namespace CUDA
+}} // end namespace Langevin::CUDA
 

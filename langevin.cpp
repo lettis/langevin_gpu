@@ -2,48 +2,9 @@
 #include <iostream>
 #include <algorithm>
 
-#include "fields.hpp"
+#include "langevin.hpp"
 
-
-/*
-Eigen::MatrixXf
-covariance(std::vector<std::vector<float>> v1
-         , std::vector<std::vector<float>> v2) {
-  unsigned int n_frames = v1.size();
-  unsigned int n_dim = v1[0].size();
-  Eigen::MatrixXf cov = Eigen::MatrixXf::Zero(n_dim
-                                            , n_dim);
-  // compute averages beforehand and use <(X-<X>).(Y-<Y>)>
-  // instead of <XY> - <X><Y>, because the second variant
-  // --while formally correct-- is prone to floating-point errors.
-  std::vector<float> mu1(n_dim, 0);
-  std::vector<float> mu2(n_dim, 0);
-  for (unsigned int k=0; k < n_frames; ++k) {
-    for (unsigned int j=0; j < n_dim; ++j) {
-      mu1[j] += v1[k][j];
-      mu2[j] += v2[k][j];
-    }
-  }
-  for (float& mu: mu1) {
-    mu /= n_frames;
-  }
-  for (float& mu: mu2) {
-    mu /= n_frames;
-  }
-  // compute covariances
-  for (unsigned int k=0; k < n_frames; ++k) {
-    for (unsigned int i=0; i < n_dim; ++i) {
-      for (unsigned int j=0; j < n_dim; ++j) {
-        cov(i,j) += (v1[k][i] - mu1[i]) * (v2[k][j] - mu2[j]);
-      }
-    }
-  }
-  cov = cov / (n_frames-1.0);
-  // return cov-matrix with enforced symmetry
-  // (to counter numerical instabilities in the data)
-  return 0.5 * (cov + cov.transpose());
-}
-*/
+namespace Langevin {
 
 std::vector<float>
 propagate(std::vector<float> position
@@ -123,4 +84,6 @@ write_stats(std::ostream& fh
   // propagation retries
   fh << " " << retries << std::endl;
 }
+
+} // end Langevin::
 

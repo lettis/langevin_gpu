@@ -1,25 +1,26 @@
-# Copyright (c) 2015, Florian Sittel (www.lettis.net)
-# All rights reserved.
+# Copyright (c) 2017, Florian Sittel (www.lettis.net) All rights reserved.
 # 
-# Redistribution and use in source and binary forms, with or without modification,
-# are permitted provided that the following conditions are met:
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 # 
 # 1. Redistributions of source code must retain the above copyright notice,
-#    this list of conditions and the following disclaimer.
+# this list of conditions and the following disclaimer.
 # 
 # 2. Redistributions in binary form must reproduce the above copyright notice,
-#    this list of conditions and the following disclaimer in the documentation
-#    and/or other materials provided with the distribution.
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
 # 
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
-# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-# OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
-# SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
-# OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
-# TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
 
 cmake_minimum_required (VERSION 2.8)
 project (dle_gpu_b1) 
@@ -29,6 +30,8 @@ project (dle_gpu_b1)
 if(STATIC_LINKING)
   set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
 endif(STATIC_LINKING)
+
+
 
 # Gnu compiler setup
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
@@ -47,7 +50,8 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
   set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-pragmas")
   set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wmissing-declarations")
 else()
-  message(SEND_ERROR "currently no other compiler than the GCC is supported. sorry.")
+  message(SEND_ERROR
+    "currently no other compiler than the GCC is supported. sorry.")
 endif()
 
 
@@ -61,34 +65,24 @@ include_directories (${EIGEN3_INCLUDE_DIR})
 add_subdirectory(coords_file)
 
 
-set(SRCS dle_gpu_b1.cpp tools.cpp fields.cpp)
+set(SRCS dle_gpu_b1.cpp tools.cpp langevin.cpp langevin_cuda.cu)
 
 set(LIBS ${Boost_LIBRARIES} coords_file)
 
-if(${USE_CUDA})
-  message(STATUS "using CUDA")
-  find_package(CUDA REQUIRED)
-  set(CUDA_PROPAGATE_HOST_FLAGS OFF)
-  set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} "-arch=sm_30;-std=c++11;-O3;-DVERBOSE;-Xcompiler -fopenmp")
-  # debugging
-  #set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} "-g -G")
+## CUDA setup
+find_package(CUDA REQUIRED)
+set(CUDA_PROPAGATE_HOST_FLAGS OFF)
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
+     "-arch=sm_30;-std=c++11;-O3;-DVERBOSE;-Xcompiler -fopenmp")
+set (LIBS ${LIBS} ${CUDA_LIBRARIES})
+include_directories (${CUDA_INCLUDE_DIRS})
 
-  set (SRCS ${SRCS} neighbors_cuda.cu)
 
-  set (LIBS ${LIBS} ${CUDA_LIBRARIES})
-  include_directories (${CUDA_INCLUDE_DIRS})
-  add_definitions(-DUSE_CUDA)
-endif()
 
 set (PROGNAME dle_gpu_b1)
 
 
-if (${USE_CUDA})
-  cuda_add_executable(${PROGNAME} ${SRCS})
-else()
-  add_executable(${PROGNAME} ${SRCS})
-endif()
-
+cuda_add_executable(${PROGNAME} ${SRCS})
 target_link_libraries(${PROGNAME} ${LIBS})
 
 

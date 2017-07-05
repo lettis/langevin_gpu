@@ -1,11 +1,12 @@
 
-#include "neighbors_cuda.hpp"
+#include "langevin_cuda.hpp"
 
 #include <limits>
 #include <iostream>
 
 #include <stdio.h>
 
+namespace Langevin {
 namespace CUDA {
 
   void
@@ -672,5 +673,5 @@ namespace CUDA {
     return cov;
   }
 
-} // end namespace CUDA
+}} // end namespace Langevin::CUDA
 
