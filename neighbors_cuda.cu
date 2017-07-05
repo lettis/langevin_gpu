@@ -346,7 +346,6 @@ namespace CUDA {
              , unsigned int* n_neighbors
              , unsigned int n_frames
              , unsigned int n_dim
-             , unsigned int j
              , float* v_means) {
     __shared__ float v_forward[BSIZE];
     __shared__ float v_backward[BSIZE];
@@ -355,37 +354,45 @@ namespace CUDA {
     unsigned int bid = blockIdx.x;
     unsigned int tid = threadIdx.x;
     unsigned int gid = bid * bsize + tid;
-    bool this_is_neighbor = (is_neighbor[gid] == 1);
-    // aggregate forward and backward velocities for every dimension
-    if ((0 < gid)
-     && (gid < n_frames-1)
-     && this_is_neighbor) {
-      float x = coords[gid*n_dim+j];
-      float x_forward = coords[(gid+1)*n_dim+j];
-      float x_backward = coords[(gid-1)*n_dim+j];
-      v_forward[tid] = x_forward - x;
-      v_backward[tid] = x - x_backward;
-    } else {
-      v_forward[tid] = 0.0f;
-      v_backward[tid] = 0.0f;
+    bool this_is_neighbor = (is_neighbor[gid] == 1)
+                         && (0 < gid)
+                         && (gid < n_frames-1);
+    for (unsigned int j=0; j < n_dim; ++j) {
+      // aggregate forward and backward velocities for every dimension
+      if (this_is_neighbor) {
+        float x = coords[gid*n_dim+j];
+        float x_forward = coords[(gid+1)*n_dim+j];
+        float x_backward = coords[(gid-1)*n_dim+j];
+        v_forward[tid] = x_forward - x;
+        v_backward[tid] = x - x_backward;
+      } else {
+        v_forward[tid] = 0.0f;
+        v_backward[tid] = 0.0f;
+      }
+      //// aggregate results
+      pairwiseMemReduce<float, BSIZE>(v_forward
+                                    , tid);
+      pairwiseMemReduce<float, BSIZE>(v_backward
+                                    , tid);
+      warpReduceMem(v_forward
+                  , tid);
+      warpReduceMem(v_backward
+                  , tid);
+      if (tid == 0) {
+        atomicAdd(&v_means[j]
+                , v_forward[0]);
+        atomicAdd(&v_means[n_dim+j]
+                , v_backward[0]);
+      }
     }
-    //// aggregate results
-    pairwiseMemReduce<float, BSIZE>(v_forward
-                                  , tid);
-    pairwiseMemReduce<float, BSIZE>(v_backward
-                                  , tid);
-    warpReduceMem(v_forward
-                , tid);
-    warpReduceMem(v_backward
-                , tid);
-    if (tid == 0) {
-      atomicAdd(&v_means[j]
-              , v_forward[0]);
-      atomicAdd(&v_means[n_dim+j]
-              , v_backward[0]);
-    }
-    // average velocities ...
-    if (gid == 0) {
+  }
+
+  __global__ void
+  normalize_v_means_krnl(unsigned int* n_neighbors
+                       , unsigned int n_dim
+                       , float* v_means) {
+    unsigned int j = threadIdx.x;
+    if (j < n_dim) {
       v_means[j] /= (float) n_neighbors[0];
       v_means[n_dim+j] /= (float) n_neighbors[0];
     }
@@ -540,19 +547,24 @@ namespace CUDA {
                   , sizeof(float) * 2 * gpu.n_dim);
     check_error("reset v_means");
     // kernel call: compute velocity means (both, forward and backward)
-    for (unsigned int j=0; j < gpu.n_dim; ++j) {
-      v_means_krnl
-      <<< n_blocks(gpu.n_frames
-                 , BSIZE)
-        , BSIZE >>> (gpu.is_neighbor
-                   , gpu.coords
-                   , gpu.n_neighbors
-                   , gpu.n_frames
-                   , gpu.n_dim
-                   , j
-                   , gpu.v_means);
-      check_error("kernel exec: v_means_krnl");
-    }
+    v_means_krnl
+    <<< n_blocks(gpu.n_frames
+               , BSIZE)
+      , BSIZE >>> (gpu.is_neighbor
+                 , gpu.coords
+                 , gpu.n_neighbors
+                 , gpu.n_frames
+                 , gpu.n_dim
+                 , gpu.v_means);
+    check_error("kernel exec: v_means_krnl");
+
+    normalize_v_means_krnl
+    <<< n_blocks(gpu.n_dim
+               , 32)
+      , 32 >>> (gpu.n_neighbors
+              , gpu.n_dim
+              , gpu.v_means);
+    check_error("kernel exec: normalize_v_means_krnl");
   }
 
   void
