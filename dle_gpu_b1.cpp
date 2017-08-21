@@ -209,8 +209,9 @@ int main(int argc, char* argv[]) {
     Langevin::CUDA::get_n_neighbors(gpu_settings);
   //// integrate Langevin dynamics
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
+    //TODO: check this
     // compute free energy estimates for neighborhoods
-    Langevin::CUDA::nq_shifted_fe_sum(gpu_settings);
+//    Langevin::CUDA::nq_shifted_fe_sum(gpu_settings);
     // compute local velocities (forward and backward)
     // for cov-matrix estimation
     Langevin::CUDA::nq_v_means(gpu_settings);
