@@ -2,9 +2,9 @@
 
 #define BSIZE 128
 
-#include <unordered_set>
-#include <unordered_map>
 #include <vector>
+#include <utility>
+#include <string>
 
 
 namespace Langevin {
@@ -28,19 +28,17 @@ namespace CUDA {
     float* coords;
     //! reference free energies [n_frames]
     float* fe;
-    //! result of neighbor search [n_frames x (2*n_cols +1)],
+    //! result of neighbor search [n_frames],
     //! i.e. for unshifted and shifted reference point
     char* is_neighbor;
-    //! number of found neighbors (per shift)   [2*n_cols+1]
+    //! number of found neighbors [1]
     unsigned int* n_neighbors;
     //! history of reference coordinates
     //! 0: has no future sample, i.e. end of a trajecotry chunk
     //! 1: has a future sample
     char* has_future;
-    //! free energy estimates for the different shifts [2*n_dim]
-    float* shifts_fe;
     //! means of velocity estimates (forward and backward)  [2*n_dim]
-    //! (necessary for cov-mat computation)
+    //! (necessary for cov-mat computation and drift estimation)
     float* v_means;
     //! covariance matrix [n_dim x n_dim]
     float* cov;
@@ -79,28 +77,10 @@ namespace CUDA {
 
   //// kernel drivers ////////////
 
-  // shift pattern:
-  //
-  //    0   0   0   0 ...
-  //  +dx   0   0   0
-  //  -dx   0   0   0
-  //    0 +dx   0   0
-  //    0 -dx   0   0
-  //    0   0 +dx   0
-  //    0   0 -dx   0
-  //    0   0   0 +dx
-  //    0   0   0 -dx
-  //    .
-  //    .
-  //    .
   void
   nq_neighbors(const std::vector<float>& xs
              , float rad2
-             , float dx
              , GPUSettings& gpu);
-
-  void
-  nq_shifted_fe_sum(GPUSettings& gpu);
 
   void
   nq_v_means(GPUSettings& gpu);
@@ -113,17 +93,16 @@ namespace CUDA {
 
   //// retrieve results from GPU //////////
   
-  std::vector<unsigned int>
+  unsigned int
   get_n_neighbors(GPUSettings& gpu);
 
-  std::vector<float>
-  get_drift(GPUSettings& gpu
-          , std::vector<unsigned int> n_neighbors
-          , float dx);
+  std::pair<std::vector<float>, std::vector<float>>
+  get_v_means(GPUSettings& gpu
+            , unsigned int n_neighbors);
 
   std::vector<float>
   get_cov(GPUSettings& gpu
-        , std::vector<unsigned int> n_neighbors);
+        , unsigned int n_neighbors);
 
 }} // end namespace Langevin::CUDA
 

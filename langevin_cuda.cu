@@ -104,10 +104,10 @@ namespace CUDA {
              , sizeof(char) * gpu.n_frames
              , cudaMemcpyHostToDevice);
     check_error("copy has_future");
-    //// allocate memory for shifted fe estimates
-    cudaMalloc((void**) &gpu.shifts_fe
-             , sizeof(float) * 2*gpu.n_dim);
-    check_error("malloc shifts_fe");
+//    //// allocate memory for shifted fe estimates
+//    cudaMalloc((void**) &gpu.shifts_fe
+//             , sizeof(float) * 2*gpu.n_dim);
+//    check_error("malloc shifts_fe");
     //// allocate memory for velocity mean values
     cudaMalloc((void**) &gpu.v_means
              , sizeof(float) * 2*gpu.n_dim);
@@ -134,8 +134,6 @@ namespace CUDA {
     check_error("free n_neighbors");
     cudaFree(gpu.has_future);
     check_error("free has_future");
-    cudaFree(gpu.shifts_fe);
-    check_error("free shifts_fe");
     cudaFree(gpu.v_means);
     check_error("free v_means");
     cudaFree(gpu.cov);
@@ -207,7 +205,6 @@ namespace CUDA {
   neighbors_krnl(float* xs
                , float* ref_coords
                , float rad2
-               , float dx
                , char* has_future
                , unsigned int n_frames
                , unsigned int n_dim
@@ -217,54 +214,35 @@ namespace CUDA {
     unsigned int bid = blockIdx.x;
     unsigned int tid = threadIdx.x;
     unsigned int gid = bid * bsize + tid;
-    // locally shared memory for fast access
-    // of dx-shifted xs and reference coordinates
+    // locally shared memory for fast access of xs and reference coordinates
     float* s_coords = (float*) &smem[0];
     float* s_xs = (float*) &smem[n_dim*BSIZE];
     // read xs to shared mem
     if (tid < n_dim) {
-      float x = xs[tid];
-      // unshifted xs
-      s_xs[tid] = x;
-      // shifted xs for numerical gradient estimation
-      for (unsigned int j_shift=0; j_shift < n_dim; ++j_shift) {
-        if (j_shift != tid) {
-          s_xs[(2*j_shift+1)*n_dim+tid] = x;
-          s_xs[(2*j_shift+2)*n_dim+tid] = x;
-        } else {
-          s_xs[(2*j_shift+1)*n_dim+tid] = x + dx;
-          s_xs[(2*j_shift+2)*n_dim+tid] = x - dx;
-        }
-      }
+      s_xs[tid] = xs[tid];
     }
     __syncthreads();
     if (gid < n_frames) {
-      unsigned int n_shifts = 2*n_dim + 1;
       // without history (no future, no past), don't count as neighbor!
       if ((gid == 0)
        || (gid == n_frames-1)
        || (has_future[gid] == 0)
        || (has_future[gid-1] == 0)) {
-        for (unsigned int j_shift=0; j_shift < n_shifts; ++j_shift) {
-          is_neighbor[j_shift*n_frames + gid] = 0;
-        }
+        is_neighbor[gid] = 0;
       } else {
         // read ref coords to shared mem
         for (unsigned int j=0; j < n_dim; ++j) {
           s_coords[tid*n_dim+j] = ref_coords[gid*n_dim+j];
         }
-        // check if is neighbor for different position shifts
-        for (unsigned int j_shift=0; j_shift < n_shifts; ++j_shift) {
-          float d2 = 0.0f;
-          for (unsigned int k=0; k < n_dim; ++k) {
-            float d = s_coords[tid*n_dim+k] - s_xs[j_shift*n_dim+k];
-            d2 += d*d;
-          }
-          if (d2 <= rad2) {
-            is_neighbor[j_shift*n_frames + gid] = 1;
-          } else {
-            is_neighbor[j_shift*n_frames + gid] = 0;
-          }
+        float d2 = 0.0f;
+        for (unsigned int k=0; k < n_dim && d2 < rad2; ++k) {
+          float d = s_coords[tid*n_dim+k] - s_xs[k];
+          d2 += d*d;
+        }
+        if (d2 < rad2) {
+          is_neighbor[gid] = 1;
+        } else {
+          is_neighbor[gid] = 0;
         }
       }
     }
@@ -273,7 +251,6 @@ namespace CUDA {
   __global__ void
   count_neighbors_krnl(char* is_neighbor
                      , unsigned int n_frames
-                     , unsigned int n_shifts
                      , unsigned int* n_neighbors) {
     __shared__ unsigned int smem_uint[BSIZE];
     // CUDA-specific indices for block, thread and global
@@ -281,63 +258,23 @@ namespace CUDA {
     unsigned int bid = blockIdx.x;
     unsigned int tid = threadIdx.x;
     unsigned int gid = bid * bsize + tid;
-    for (unsigned int j_shift=0; j_shift < n_shifts; ++j_shift) {
-      // count found neighbors for every reference position shift
-      bool this_is_neighbor = (is_neighbor[j_shift*n_frames+gid] == 1);
-      if (gid < n_frames-1
-       && this_is_neighbor) {
-        smem_uint[tid] = 1;
-      } else {
-        smem_uint[tid] = 0;
-      }
-      __syncthreads();
-      //// aggregate results
-      pairwiseMemReduce<unsigned int, BSIZE>(smem_uint
-                                           , tid);
-      warpReduceMem<unsigned int>(smem_uint
-                                , tid);
-      if (tid == 0) {
-        atomicAdd(&n_neighbors[j_shift]
-                , smem_uint[0]);
-      }
+    // count found neighbors for every reference position shift
+    bool this_is_neighbor = (is_neighbor[gid] == 1);
+    if (gid < n_frames-1
+     && this_is_neighbor) {
+      smem_uint[tid] = 1;
+    } else {
+      smem_uint[tid] = 0;
     }
-  }
-
-  __global__ void
-  shifted_fe_sum_krnl(char* is_neighbor
-                    , float* fe
-                    , unsigned int n_frames
-                    , unsigned int n_shifts
-                    , float* shifts_fe) {
-    __shared__ float smem_float[BSIZE];
-    // CUDA-specific indices for block, thread and global
-    unsigned int bsize = blockDim.x;
-    unsigned int bid = blockIdx.x;
-    unsigned int tid = threadIdx.x;
-    unsigned int gid = bid * bsize + tid;
-    // sum free energies for shifted reference points
-    // (omit unshifted reference, sum(fe) not needed there)
-    for (unsigned int j_shift=1; j_shift < n_shifts; ++j_shift) {
-//TODO twice shared mem, pos/neg in one go (j < n_dim)
-      bool this_is_neighbor = (is_neighbor[j_shift*n_frames+gid] == 1);
-      if (gid < n_frames-1
-       && this_is_neighbor) {
-        smem_float[tid] = fe[gid];
-      } else {
-        smem_float[tid] = 0.0f;
-      }
-      __syncthreads();
-      // reduce in shared memory
-      pairwiseMemReduce<float, BSIZE>(smem_float
-                                    , tid);
-      // further reduce locally inside warp and aggregate
-      // results from all warps in global memory
-      warpReduceMem<float>(smem_float
-                         , tid);
-      if (tid == 0) {
-        atomicAdd(&shifts_fe[j_shift-1]
-                , smem_float[0]);
-      }
+    __syncthreads();
+    //// aggregate results
+    pairwiseMemReduce<unsigned int, BSIZE>(smem_uint
+                                         , tid);
+    warpReduceMem<unsigned int>(smem_uint
+                              , tid);
+    if (tid == 0) {
+      atomicAdd(n_neighbors
+              , smem_uint[0]);
     }
   }
 
@@ -474,70 +411,44 @@ namespace CUDA {
   void
   nq_neighbors(const std::vector<float>& xs
              , float rad2
-             , float dx
              , GPUSettings& gpu) {
-    unsigned int n_rows = gpu.n_frames;
-    unsigned int n_cols = gpu.n_dim;
+    unsigned int n_frames = gpu.n_frames;
+    unsigned int n_dim = gpu.n_dim;
     // copy current position to GPU
     cudaMemcpy(gpu.xs
              , xs.data()
-             , sizeof(float) * n_cols
+             , sizeof(float) * n_dim
              , cudaMemcpyHostToDevice);
     check_error("copy reference point coordinates to device");
-    // shared mem for dx-shifted positions [n_cols * (2*n_cols + 1)]
-    // and reference coordinates [n_cols * BSIZE]
-    unsigned int shared_mem_size = sizeof(float)
-                                 * n_cols
-                                 * ((2*n_cols+1) + BSIZE);
+    // shared mem for position [n_dim]
+    // and reference coordinates [n_dim * BSIZE]
+    unsigned int shared_mem_size = sizeof(float) * (1+BSIZE) * n_dim;
     // kernel call: find neighbors
     neighbors_krnl
-    <<< n_blocks(n_rows
+    <<< n_blocks(n_frames
                , BSIZE)
       , BSIZE
       , shared_mem_size >>> (gpu.xs
                            , gpu.coords
                            , rad2
-                           , dx
                            , gpu.has_future
-                           , n_rows
-                           , n_cols
+                           , n_frames
+                           , n_dim
                            , gpu.is_neighbor);
     check_error("kernel exec: neighbors_krnl");
     // reset neighbor count
-    unsigned int n_shifts = 2*gpu.n_dim + 1;
     cudaMemsetAsync(gpu.n_neighbors
                   , 0
-                  , sizeof(unsigned int) * n_shifts);
+                  , sizeof(unsigned int));
     check_error("reset n_neighbors");
     // kernel call: count neighbors
     count_neighbors_krnl
-    <<< n_blocks(n_rows
+    <<< n_blocks(n_frames
                , BSIZE)
       , BSIZE >>> (gpu.is_neighbor
-                 , n_rows
-                 , n_shifts
+                 , n_frames
                  , gpu.n_neighbors);
     check_error("kernel exec: count_neighbors_krnl"); 
-  }
-
-  void
-  nq_shifted_fe_sum(GPUSettings& gpu) {
-    // reset fe sums
-    unsigned int n_shifts = 2*gpu.n_dim + 1;
-    cudaMemset(gpu.shifts_fe
-             , 0
-             , sizeof(float) * (n_shifts-1));
-    check_error("reset shifts_fe");
-    // kernel call: compute sum of free energies for every reference shift
-    shifted_fe_sum_krnl
-    <<< n_blocks(gpu.n_frames
-               , BSIZE)
-      , BSIZE >>> (gpu.is_neighbor
-                 , gpu.fe
-                 , gpu.n_frames
-                 , n_shifts
-                 , gpu.shifts_fe);
-      check_error("kernel exec: shifted_fe_sum_krnl");
   }
 
   void
@@ -622,42 +533,45 @@ namespace CUDA {
 
   //// retrieve data from GPU
 
-  std::vector<unsigned int>
+  unsigned int
   get_n_neighbors(GPUSettings& gpu) {
-    std::vector<unsigned int> n(2*gpu.n_dim + 1);
-    cudaMemcpy(n.data()
+    unsigned int n=0;
+    cudaMemcpy(&n
              , gpu.n_neighbors
-             , sizeof(unsigned int) * (2*gpu.n_dim+1)
+             , sizeof(unsigned int)
              , cudaMemcpyDeviceToHost);
     check_error("memcpy: n_neighbors from GPU");
     return n;
   }
 
-  std::vector<float>
-  get_drift(GPUSettings& gpu
-          , std::vector<unsigned int> n_neighbors
-          , float dx) {
-    std::vector<float> fe(2*gpu.n_dim);
-    cudaMemcpy(fe.data()
-             , gpu.shifts_fe
-             , sizeof(float) * (2*gpu.n_dim)
+  std::pair<std::vector<float>, std::vector<float>>
+  get_v_means(GPUSettings& gpu
+            , unsigned int n_neighbors) {
+    std::vector<float> v_forward(gpu.n_dim);
+    cudaMemcpy(v_forward.data()
+             , &gpu.v_means[0]
+             , sizeof(float) * gpu.n_dim
              , cudaMemcpyDeviceToHost);
-    check_error("memcpy: shifts_fe from GPU");
-    // compute drift
-    std::vector<float> drift(gpu.n_dim);
-    for (unsigned int i=0; i < 2*gpu.n_dim; ++i) {
-      // correctly rescale shifted free energies
-      fe[i] /= (float) n_neighbors[i+1];
+    check_error("memcpy: v_means forward");
+    std::vector<float> v_backward(gpu.n_dim);
+    cudaMemcpy(v_forward.data()
+             , &gpu.v_means[gpu.n_dim]
+             , sizeof(float) * gpu.n_dim
+             , cudaMemcpyDeviceToHost);
+    check_error("memcpy: v_means backward");
+    for (float& v: v_forward) {
+      v /= (float) n_neighbors;
     }
-    for (unsigned int i=0; i < gpu.n_dim; ++i) {
-      drift[i] = -1.0 * (fe[2*i] - fe[2*i+1]) / 2.0 / dx;
+    for (float& v: v_backward) {
+      v /= (float) n_neighbors;
     }
-    return drift;
+    return {v_forward
+          , v_backward};
   }
 
   std::vector<float>
   get_cov(GPUSettings& gpu
-        , std::vector<unsigned int> n_neighbors) {
+        , unsigned int n_neighbors) {
     std::vector<float> cov(gpu.n_dim*gpu.n_dim);
     // get raw cov-data from GPU
     cudaMemcpy(cov.data()
@@ -667,7 +581,7 @@ namespace CUDA {
     check_error("memcpy: cov from GPU");
     for (unsigned int i=0; i < gpu.n_dim; ++i) {
       for (unsigned int j=0; j < gpu.n_dim; ++j) {
-        cov[i*gpu.n_dim+j] /= (float) (n_neighbors[0]-1);
+        cov[i*gpu.n_dim+j] /= (float) (n_neighbors-1);
       }
     }
     return cov;
