@@ -1,8 +1,8 @@
-
 #include "langevin_cuda.hpp"
 
 #include <limits>
 #include <iostream>
+#include <algorithm>
 
 #include <stdio.h>
 
@@ -48,15 +48,17 @@ namespace CUDA {
   GPUSettings
   prepare_gpu(int i_gpu
             , unsigned int n_dim
+            , float rad2
             , const std::vector<std::vector<float>>& ref_coords
             , const std::vector<char>& has_future
-            , const std::vector<float>& fe) {
+            , const std::vector<unsigned int>& states) {
     cudaSetDevice(i_gpu);
     check_error("setting CUDA device");
     GPUSettings gpu;
     gpu.n_frames = ref_coords.size();
     gpu.id = i_gpu;
     gpu.n_dim = n_dim;
+    gpu.rad2 = rad2;
     //// reserve memory for reference point (aka 'xs')
     cudaMalloc((void**) &gpu.xs
              , sizeof(float) * n_dim);
@@ -77,37 +79,52 @@ namespace CUDA {
              , sizeof(float) * n_dim * gpu.n_frames
              , cudaMemcpyHostToDevice);
     check_error("copy coords");
-    //// reserve memory for reference free energies
-    cudaMalloc((void**) &gpu.fe
-             , sizeof(float) * gpu.n_frames);
+    //// reserve memory for reference states
+    cudaMalloc((void**) &gpu.states
+             , sizeof(unsigned int) * gpu.n_frames);
     // copy reference free energies to GPU
-    cudaMemcpy(gpu.fe
-             , fe.data()
-             , sizeof(float) * gpu.n_frames
+    cudaMemcpy(gpu.states
+             , states.data()
+             , sizeof(unsigned int) * gpu.n_frames
              , cudaMemcpyHostToDevice);
-    check_error("copy fe");
+    check_error("copy states");
+    // allocate memory for state counts
+    gpu.n_states = (*std::max_element(states.begin()
+                                    , states.end()));
+    cudaMalloc((void**) &gpu.state_count
+             , sizeof(unsigned int) * gpu.n_states);
+    cudaMalloc((void**) &gpu.state_count_timeshift
+             , sizeof(unsigned int) * gpu.n_states);
     //// allocate memory for neighborhood
     cudaMalloc((void**) &gpu.is_neighbor
-             , sizeof(char) * gpu.n_frames * (2*n_dim+1));
-    check_error("malloc is_neighbor");
-    //// allocate memory number of neighbors
-    cudaMalloc((void**) &gpu.n_neighbors
-             , sizeof(unsigned int) * (2*n_dim+1));
-    check_error("malloc n_neighbors");
-    //// reserve memroy for futures
-    cudaMalloc((void**) &gpu.has_future
              , sizeof(char) * gpu.n_frames);
-    check_error("malloc has_future");
-    // copy futures to GPU
-    cudaMemcpy(gpu.has_future
-             , has_future.data()
-             , sizeof(char) * gpu.n_frames
+    check_error("malloc is_neighbor");
+    cudaMalloc((void**) &gpu.is_neighbor_timeshift
+             , sizeof(char) * gpu.n_frames);
+    check_error("malloc is_neighbor_timeshift");
+    //// allocate memory number of neighbors
+    cudaMalloc((void**) &gpu.n_neighbors_dev
+             , sizeof(unsigned int) * 2);
+    check_error("malloc n_neighbors_dev");
+    //// reserve memory for traj_id
+    cudaMalloc((void**) &gpu.traj_id
+             , sizeof(unsigned int) * gpu.n_frames);
+    check_error("malloc traj_id");
+    // construct traj_id from futures
+    std::vector<unsigned int> traj_id(gpu.n_frames);
+    unsigned int i_traj = 1;
+    for (unsigned int i=0; i < gpu.n_frames; ++i) {
+      traj_id[i] = i_traj;
+      if (has_future[i] == 0) {
+        ++i_traj;
+      }
+    }
+    // copy traj_id to GPU
+    cudaMemcpy(gpu.traj_id
+             , traj_id.data()
+             , sizeof(unsigned int) * gpu.n_frames
              , cudaMemcpyHostToDevice);
-    check_error("copy has_future");
-//    //// allocate memory for shifted fe estimates
-//    cudaMalloc((void**) &gpu.shifts_fe
-//             , sizeof(float) * 2*gpu.n_dim);
-//    check_error("malloc shifts_fe");
+    check_error("copy traj_id");
     //// allocate memory for velocity mean values
     cudaMalloc((void**) &gpu.v_means
              , sizeof(float) * 2*gpu.n_dim);
@@ -126,14 +143,16 @@ namespace CUDA {
     check_error("free xs");
     cudaFree(gpu.coords);
     check_error("free coords");
-    cudaFree(gpu.fe);
-    check_error("free fe");
+    cudaFree(gpu.states);
+    check_error("free states");
     cudaFree(gpu.is_neighbor);
     check_error("free is_neighbor");
-    cudaFree(gpu.n_neighbors);
-    check_error("free n_neighbors");
-    cudaFree(gpu.has_future);
-    check_error("free has_future");
+    cudaFree(gpu.is_neighbor_timeshift);
+    check_error("free is_neighbor_timeshift");
+    cudaFree(gpu.n_neighbors_dev);
+    check_error("free n_neighbors_dev");
+    cudaFree(gpu.traj_id);
+    check_error("free traj_id");
     cudaFree(gpu.v_means);
     check_error("free v_means");
     cudaFree(gpu.cov);
@@ -205,7 +224,7 @@ namespace CUDA {
   neighbors_krnl(float* xs
                , float* ref_coords
                , float rad2
-               , char* has_future
+               , unsigned int* traj_id
                , unsigned int n_frames
                , unsigned int n_dim
                , char* is_neighbor) {
@@ -223,11 +242,12 @@ namespace CUDA {
     }
     __syncthreads();
     if (gid < n_frames) {
+      //TODO: preloading traj ids might give a performance boost
       // without history (no future, no past), don't count as neighbor!
       if ((gid == 0)
        || (gid == n_frames-1)
-       || (has_future[gid] == 0)
-       || (has_future[gid-1] == 0)) {
+       || (traj_id[gid-1] != traj_id[gid])
+       || (traj_id[gid] != traj_id[gid+1])) {
         is_neighbor[gid] = 0;
       } else {
         // read ref coords to shared mem
@@ -249,9 +269,33 @@ namespace CUDA {
   }
 
   __global__ void
+  neighbors_timeshift_krnl(unsigned int tau
+                         , unsigned int* traj_id
+                         , char* is_neighbor
+                         , unsigned int n_frames
+                         , char* is_neighbor_timeshift) {
+    // CUDA-specific indices for block, thread and global
+    unsigned int bsize = blockDim.x;
+    unsigned int bid = blockIdx.x;
+    unsigned int tid = threadIdx.x;
+    unsigned int gid = bid * bsize + tid;
+    if (gid < n_frames) {
+      // either copy timeshifted value or set to zero
+      // if from another trajectory
+      if ((gid < tau)
+       || (traj_id[gid-tau] != traj_id[gid])) {
+        is_neighbor_timeshift[gid] = 0;
+      } else {
+        is_neighbor_timeshift[gid] = is_neighbor[gid-tau];
+      }
+    }
+  }
+
+  __global__ void
   count_neighbors_krnl(char* is_neighbor
                      , unsigned int n_frames
-                     , unsigned int* n_neighbors) {
+                     , unsigned int i_counter
+                     , unsigned int* n_neighbors_dev) {
     __shared__ unsigned int smem_uint[BSIZE];
     // CUDA-specific indices for block, thread and global
     unsigned int bsize = blockDim.x;
@@ -273,15 +317,33 @@ namespace CUDA {
     warpReduceMem<unsigned int>(smem_uint
                               , tid);
     if (tid == 0) {
-      atomicAdd(n_neighbors
+      atomicAdd(&n_neighbors_dev[i_counter]
               , smem_uint[0]);
+    }
+  }
+
+  __global__ void
+  count_states_krnl(unsigned int* states
+                  , char* is_neighbor
+                  , unsigned int n_frames
+                  , unsigned int* state_count) {
+    // CUDA-specific indices for block, thread and global
+    unsigned int bsize = blockDim.x;
+    unsigned int bid = blockIdx.x;
+    unsigned int tid = threadIdx.x;
+    unsigned int gid = bid * bsize + tid;
+    // count occurrences of states
+    if ((gid < n_frames)
+     && (is_neighbor[gid] == 1)) {
+      unsigned int state = states[gid];
+      atomicAdd(&state_count[state]
+              , 1);
     }
   }
 
   __global__ void
   v_means_krnl(char* is_neighbor
              , float* coords
-             , unsigned int* n_neighbors
              , unsigned int n_frames
              , unsigned int n_dim
              , float* v_means) {
@@ -326,13 +388,13 @@ namespace CUDA {
   }
 
   __global__ void
-  normalize_v_means_krnl(unsigned int* n_neighbors
+  normalize_v_means_krnl(unsigned int n_neighbors
                        , unsigned int n_dim
                        , float* v_means) {
     unsigned int j = threadIdx.x;
     if (j < n_dim) {
-      v_means[j] /= (float) n_neighbors[0];
-      v_means[n_dim+j] /= (float) n_neighbors[0];
+      v_means[j] /= (float) n_neighbors;
+      v_means[n_dim+j] /= (float) n_neighbors;
     }
   }
 
@@ -410,7 +472,6 @@ namespace CUDA {
 
   void
   nq_neighbors(const std::vector<float>& xs
-             , float rad2
              , GPUSettings& gpu) {
     unsigned int n_frames = gpu.n_frames;
     unsigned int n_dim = gpu.n_dim;
@@ -430,24 +491,48 @@ namespace CUDA {
       , BSIZE
       , shared_mem_size >>> (gpu.xs
                            , gpu.coords
-                           , rad2
-                           , gpu.has_future
+                           , gpu.rad2
+                           , gpu.traj_id
                            , n_frames
                            , n_dim
                            , gpu.is_neighbor);
     check_error("kernel exec: neighbors_krnl");
-    // reset neighbor count
-    cudaMemsetAsync(gpu.n_neighbors
+    // reset neighbor count (orig and timeshifted)
+    cudaMemsetAsync(gpu.n_neighbors_dev
                   , 0
-                  , sizeof(unsigned int));
-    check_error("reset n_neighbors");
-    // kernel call: count neighbors
+                  , sizeof(unsigned int) * 2);
+    check_error("reset n_neighbors_dev");
+    // kernel call: count neighbors (orig)
     count_neighbors_krnl
     <<< n_blocks(n_frames
                , BSIZE)
       , BSIZE >>> (gpu.is_neighbor
                  , n_frames
-                 , gpu.n_neighbors);
+                 , 0
+                 , gpu.n_neighbors_dev);
+    check_error("kernel exec: count_neighbors_krnl"); 
+  }
+
+  void
+  nq_neighbors_timeshift(unsigned int tau
+                       , GPUSettings& gpu) {
+    neighbors_timeshift_krnl
+    <<< n_blocks(gpu.n_frames
+               , BSIZE)
+      , BSIZE >>> (tau
+                 , gpu.traj_id
+                 , gpu.is_neighbor
+                 , gpu.n_frames
+                 , gpu.is_neighbor_timeshift);
+    check_error("kernel exec: neighbors_timeshift_krnl");
+    // kernel call: count neighbors (timeshifted)
+    count_neighbors_krnl
+    <<< n_blocks(gpu.n_frames
+               , BSIZE)
+      , BSIZE >>> (gpu.is_neighbor_timeshift
+                 , gpu.n_frames
+                 , 1
+                 , gpu.n_neighbors_dev);
     check_error("kernel exec: count_neighbors_krnl"); 
   }
 
@@ -464,7 +549,6 @@ namespace CUDA {
                , BSIZE)
       , BSIZE >>> (gpu.is_neighbor
                  , gpu.coords
-                 , gpu.n_neighbors
                  , gpu.n_frames
                  , gpu.n_dim
                  , gpu.v_means);
@@ -535,18 +619,16 @@ namespace CUDA {
 
   unsigned int
   get_n_neighbors(GPUSettings& gpu) {
-    unsigned int n=0;
-    cudaMemcpy(&n
-             , gpu.n_neighbors
+    cudaMemcpy(&gpu.n_neighbors
+             , gpu.n_neighbors_dev
              , sizeof(unsigned int)
              , cudaMemcpyDeviceToHost);
     check_error("memcpy: n_neighbors from GPU");
-    return n;
+    return gpu.n_neighbors;
   }
 
   std::pair<std::vector<float>, std::vector<float>>
-  get_v_means(GPUSettings& gpu
-            , unsigned int n_neighbors) {
+  get_v_means(GPUSettings& gpu) {
     std::vector<float> v_forward(gpu.n_dim);
     cudaMemcpy(v_forward.data()
              , &gpu.v_means[0]
@@ -560,18 +642,17 @@ namespace CUDA {
              , cudaMemcpyDeviceToHost);
     check_error("memcpy: v_means backward");
     for (float& v: v_forward) {
-      v /= (float) n_neighbors;
+      v /= (float) gpu.n_neighbors;
     }
     for (float& v: v_backward) {
-      v /= (float) n_neighbors;
+      v /= (float) gpu.n_neighbors;
     }
     return {v_forward
           , v_backward};
   }
 
   std::vector<float>
-  get_cov(GPUSettings& gpu
-        , unsigned int n_neighbors) {
+  get_cov(GPUSettings& gpu) {
     std::vector<float> cov(gpu.n_dim*gpu.n_dim);
     // get raw cov-data from GPU
     cudaMemcpy(cov.data()
@@ -581,7 +662,7 @@ namespace CUDA {
     check_error("memcpy: cov from GPU");
     for (unsigned int i=0; i < gpu.n_dim; ++i) {
       for (unsigned int j=0; j < gpu.n_dim; ++j) {
-        cov[i*gpu.n_dim+j] /= (float) (n_neighbors-1);
+        cov[i*gpu.n_dim+j] /= (float) (gpu.n_neighbors-1);
       }
     }
     return cov;

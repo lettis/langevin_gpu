@@ -65,7 +65,12 @@ include_directories (${EIGEN3_INCLUDE_DIR})
 add_subdirectory(coords_file)
 
 
-set(SRCS dle_gpu_b1.cpp tools.cpp langevin.cpp langevin_cuda.cu)
+set(SRCS dle_gpu_b1.cpp
+         tools.cpp
+         langevin.cpp
+         msm.cpp
+         hybrid_msm_dle.cpp
+         langevin_cuda.cu)
 
 set(LIBS ${Boost_LIBRARIES} coords_file)
 

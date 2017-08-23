@@ -18,6 +18,12 @@ namespace CUDA {
     unsigned int n_dim;
     //! # frames, i.e. rows
     unsigned int n_frames;
+    //! # found neighbors, stored on host
+    unsigned int n_neighbors;
+    //! # reference states
+    unsigned int n_states;
+    //! squared hypersphere radius for neighbor search
+    float rad2;
     //// data fields (on GPU device)
     //// these are allocated during GPU setup ('prepare_gpu')
     //// and must be freed after usage ('clear_gpu').
@@ -26,17 +32,19 @@ namespace CUDA {
     //! reference coordinates [n_frames x n_dim],
     //! row-major indices (i.e.  [i,j] ident. by [i*n_cols+j])
     float* coords;
-    //! reference free energies [n_frames]
-    float* fe;
-    //! result of neighbor search [n_frames],
-    //! i.e. for unshifted and shifted reference point
+    //! reference states [n_frames]
+    unsigned int* states;
+    //! state count for given neighborhood (2 x [n_states], original and
+    //! timeshifted)
+    unsigned int* state_count;
+    unsigned int* state_count_timeshift;
+    //! result of neighbor search (2 x [n_frames], original and timeshifted)
     char* is_neighbor;
-    //! number of found neighbors [1]
-    unsigned int* n_neighbors;
-    //! history of reference coordinates
-    //! 0: has no future sample, i.e. end of a trajecotry chunk
-    //! 1: has a future sample
-    char* has_future;
+    char* is_neighbor_timeshift;
+    //! number of found neighbors [2] (original and timeshifted)
+    unsigned int* n_neighbors_dev;
+    //! id to distinguish different, concatenated trajectories
+    unsigned int* traj_id;
     //! means of velocity estimates (forward and backward)  [2*n_dim]
     //! (necessary for cov-mat computation and drift estimation)
     float* v_means;
@@ -62,9 +70,10 @@ namespace CUDA {
   GPUSettings
   prepare_gpu(int i_gpu
             , unsigned int n_dim
+            , float rad2
             , const std::vector<std::vector<float>>& ref_coords
             , const std::vector<char>& has_future
-            , const std::vector<float>& fe);
+            , const std::vector<unsigned int>& states);
 
   void
   clear_gpu(GPUSettings& settings);
@@ -79,7 +88,6 @@ namespace CUDA {
 
   void
   nq_neighbors(const std::vector<float>& xs
-             , float rad2
              , GPUSettings& gpu);
 
   void
@@ -97,12 +105,10 @@ namespace CUDA {
   get_n_neighbors(GPUSettings& gpu);
 
   std::pair<std::vector<float>, std::vector<float>>
-  get_v_means(GPUSettings& gpu
-            , unsigned int n_neighbors);
+  get_v_means(GPUSettings& gpu);
 
   std::vector<float>
-  get_cov(GPUSettings& gpu
-        , unsigned int n_neighbors);
+  get_cov(GPUSettings& gpu);
 
 }} // end namespace Langevin::CUDA
 
