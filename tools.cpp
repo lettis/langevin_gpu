@@ -18,6 +18,22 @@ namespace Tools {
                           , std::mt19937(seed));
     return rnd;
   }
+
+  unsigned int
+  rnd_state(Eigen::VectorXf weights
+          , Dice& rnd) {
+    // throw dice to get some random p in [0,1]
+    float p = rnd.uniform();
+    float p_sum = 0;
+    unsigned int i = 0;
+    // sum probabilities to select next state (in [1,N])
+    while (p_sum <= p
+        && i < weights.size()) {
+      p_sum += weights(i);
+      ++i;
+    }
+    return i;
+  }
   
   std::vector<char>
   read_futures(std::string fname) {

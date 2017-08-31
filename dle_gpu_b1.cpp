@@ -43,10 +43,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "hybrid_msm_dle.hpp"
 
 
+enum SimulationMode {
+    UNCOUPLED          = 0
+  , COUPLED_DISCRETE   = 1
+  , COUPLED_CONTINUOUS = 2
+  , DLE_ONLY           = 3
+  , UNKNOWN_MODE       = 4
+};
+
+
+
 int main(int argc, char* argv[]) {
   namespace b_po = boost::program_options;
   b_po::variables_map args;
-  b_po::options_description desc(std::string(argv[1]).append(
+  b_po::options_description desc(std::string(argv[0]).append(
     "\n\n"
     "TODO: description\n"
     "\n"
@@ -54,47 +64,139 @@ int main(int argc, char* argv[]) {
   desc.add_options()
     ("help,h", b_po::bool_switch()->default_value(false),
      "show this help.")
-    // required inputs
+    ("mode,m", b_po::value<unsigned int>()->required(),
+     "input (required): simulation mode.\n"
+     "  0  uncoupled\n"
+     "  1  coupled discrete\n"
+     "  2  coupled continuous\n"
+     "  3  dLE only")
     ("input,i", b_po::value<std::string>()->required(),
      "input (required): coordinates.")
-    ("future,f", b_po::value<std::string>()->required(),
+    ("futures,f", b_po::value<std::string>()->required(),
      "input (required): defines 'futures' of frames, i.e. has follower or not")
     ("states,S", b_po::value<std::string>()->required(),
      "input (required): assigned state of frames (must be 1 to N)")
     ("tmat,t", b_po::value<std::string>()->required(),
      "input (required): MSM transition probability (row-normalized,"
      " i.e. T_{ij} encodes transition from i to j.")
+    ("tau,T", b_po::value<unsigned int>,
+     "input: lagtime of MSM process [no. of frames]. default: 1")
     ("length,L", b_po::value<unsigned int>()->required(),
      "input (required): length of simulated trajectory")
     ("radius,r", b_po::value<float>()->required(),
      "input (required): radius for probability integration.")
-    // options
+    ("coupling,c", b_po::value<float>()->default_value(0.5),
+     "input: coupling constant for hybrid MSM/dLE modes. [0,1], default: 0.5")
     ("seed,I", b_po::value<float>()->default_value(0.0),
-     "input           : set seed for random number generator"
+     "input: set seed for random number generator"
      " (default: 0, i.e. generate seed)")
     ("minpop,P", b_po::value<unsigned int>()->default_value(200),
-     "input           : min. number of neighbors for gradient estimation."
-                      " default: 200")
+     "input: min. number of neighbors for gradient estimation."
+           " default: 200")
     ("output,o", b_po::value<std::string>()->default_value(""),
-     "output:           the sampled coordinates"
-     " default: stdout.")
+     "output: the sampled coordinates. default: stdout.")
     ("stats,s", b_po::value<std::string>()->default_value(""),
-     "output:           stats like field estimates, neighbor-populations, etc")
-//    ("temperature,T", b_po::value<unsigned int>()->default_value(300),
-//     "                  temperature for mass-correction of drift"
-//                      " (default: 300)")
+     "output: stats like field estimates, neighbor-populations, etc")
     ("igpu", b_po::value<int>()->default_value(0),
-     "                  index of GPU to use (default: 0)")
+     "index of GPU to use (default: 0)")
     ("verbose,v", b_po::bool_switch()->default_value(false),
-     "                  give verbose output.")
+     "give verbose output.")
   ;
-  // parse cmd arguments           
+  // input variables / settings
+  SimulationMode mode;
+  int i_gpu;
+  float radius;
+  float rad2;
+  unsigned int propagation_length;
+  unsigned int min_pop;
+  unsigned int max_dle_retries;
+  float coupling_constant;
+  float rnd_seed;
+  Tools::Dice rnd;
+  std::string fname_in;
+  unsigned int n_dim;
+  std::vector<std::vector<float>> ref_coords;
+  std::vector<char> has_future;
+  std::vector<unsigned int> states;
+  MSM::Model msm;
+  std::string fname_stats;
+  std::ofstream fh_stats;
+  std::string fname_out;
+  CoordsFile::FilePointer fh_out;
+  // parsing arguments / input
   try {
     b_po::store(b_po::command_line_parser(argc, argv)
                   .options(desc)
                   .run()
               , args);
     b_po::notify(args);
+    if (args["help"].as<bool>()) {
+      std::cout << desc << std::endl;
+      return EXIT_SUCCESS;
+    }
+    // simulation mode
+    unsigned int m = args["mode"].as<unsigned int>();
+    if (m < UNKNOWN_MODE) {
+      mode = static_cast<SimulationMode>(m);
+    } else {
+      std::cerr << "error: unknown mode '" << m << "'" << std::endl;
+      return EXIT_FAILURE;
+    }
+    // various parameters
+    i_gpu = args["igpu"].as<int>();
+    radius = args["radius"].as<float>();
+    rad2 = radius * radius;
+    coupling_constant = args["coupling"].as<float>();
+    //  unsigned int T = args["temperature"].as<unsigned int>();
+    propagation_length = args["length"].as<unsigned int>();
+    min_pop = args["minpop"].as<unsigned int>();
+    max_dle_retries = 100;
+    // random number generator
+    rnd_seed = args["seed"].as<float>();
+    rnd = Tools::initialize_dice(rnd_seed);
+    // input (coordinates)
+    fname_in = args["input"].as<std::string>();
+    n_dim = 0;
+    {
+      CoordsFile::FilePointer fh = CoordsFile::open(fname_in
+                                                  , "r");
+      while ( ! fh->eof()) {
+        std::vector<float> buf = fh->next();
+        if (buf.size() > 0) {
+          ref_coords.push_back(buf);
+        }
+      }
+      bool no_ref_coords = false;
+      if (ref_coords.size() == 0) {
+        no_ref_coords = true;
+      } else {
+        n_dim = ref_coords[0].size();
+      }
+      if (no_ref_coords
+       || n_dim == 0) {
+        std::cerr << "error: empty reference coordinates file" << std::endl;
+        exit(EXIT_FAILURE);
+      }
+    }
+    // input (futures)
+    has_future = Tools::read_futures(args["futures"].as<std::string>());
+    // input (states)
+    states = Tools::read_states(args["states"].as<std::string>());
+    // input (msm)
+    msm = MSM::load_msm(args["tmat"].as<std::string>()
+                      , args["tau"].as<unsigned int>()
+                      , rnd_seed);
+    // prepare output file (or stdout)
+    fname_out = args["output"].as<std::string>();
+    fh_out = CoordsFile::open(fname_out, "w");
+    // prepare stats-output (fields, etc)
+    std::string fname_stats = args["stats"].as<std::string>();
+    if (fname_stats != "") {
+      fh_stats.open(fname_stats);
+      Langevin::write_stats_header(fh_stats
+                                 , n_dim
+                                 , Tools::join_args(argc, argv));
+    }
   } catch (b_po::error& e) {
     if ( ! args["help"].as<bool>()) {
       std::cerr << "\nerror parsing arguments:\n\n"
@@ -104,69 +206,6 @@ int main(int argc, char* argv[]) {
     }
     std::cerr << desc << std::endl;
     return EXIT_FAILURE;
-  }
-  //TODO: secure against missing options,
-  //      exception handling of cmd args
-  if (args["help"].as<bool>()) {
-    std::cout << desc << std::endl;
-    return EXIT_SUCCESS;
-  }
-  // various parameters
-  int i_gpu = args["igpu"].as<int>();
-  float radius = args["radius"].as<float>();
-  float rad2 = radius * radius;
-//  unsigned int T = args["temperature"].as<unsigned int>();
-  unsigned int propagation_length = args["length"].as<unsigned int>();
-  unsigned int min_pop = args["minpop"].as<unsigned int>();
-  unsigned int max_dle_retries = 100;
-  // random number generator
-  float rnd_seed = args["seed"].as<float>();
-  Tools::Dice rnd = Tools::initialize_dice(rnd_seed);
-  // input (coordinates)
-  std::string fname_in = args["input"].as<std::string>();
-  std::vector<std::vector<float>> ref_coords;
-  unsigned int n_dim = 0;
-  {
-    CoordsFile::FilePointer fh = CoordsFile::open(fname_in
-                                                , "r");
-    while ( ! fh->eof()) {
-      std::vector<float> buf = fh->next();
-      if (buf.size() > 0) {
-        ref_coords.push_back(buf);
-      }
-    }
-    bool no_ref_coords = false;
-    if (ref_coords.size() == 0) {
-      no_ref_coords = true;
-    } else {
-      n_dim = ref_coords[0].size();
-    }
-    if (no_ref_coords
-     || n_dim == 0) {
-      std::cerr << "error: empty reference coordinates file" << std::endl;
-      exit(EXIT_FAILURE);
-    }
-  }
-  // input (futures)
-  std::vector<char> has_future =
-    Tools::read_futures(args["future"].as<std::string>());
-  // input (states)
-  std::vector<unsigned int> states =
-    Tools::read_states(args["states"].as<std::string>());
-  // input (msm)
-  MSM::Model msm = MSM::load_msm(args["tmat"].as<std::string>()
-                               , rnd_seed);
-  // prepare output file (or stdout)
-  std::string fname_out = args["output"].as<std::string>();
-  CoordsFile::FilePointer fh_out = CoordsFile::open(fname_out, "w");
-  // prepare stats-output (fields, etc)
-  std::ofstream fh_stats;
-  std::string fname_stats = args["stats"].as<std::string>();
-  if (fname_stats != "") {
-    fh_stats.open(fname_stats);
-    Langevin::write_stats_header(fh_stats
-                               , n_dim
-                               , Tools::join_args(argc, argv));
   }
   // GPU setup
   Langevin::CUDA::GPUSettings gpu;
@@ -208,7 +247,8 @@ int main(int argc, char* argv[]) {
     Langevin::write_stats(fh_stats
                         , frame.dle.fields
                         , gpu.n_neighbors
-                        , retries);
+                        , retries
+                        , frame.state);
   }
   // cleanup
   Langevin::CUDA::clear_gpu(gpu);

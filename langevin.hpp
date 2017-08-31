@@ -32,6 +32,11 @@ namespace Langevin {
   update_neighbors(Eigen::VectorXf pos
                  , Langevin::CUDA::GPUSettings& gpu);
   
+  Eigen::VectorXf
+  state_transition_probabilities(Eigen::VectorXf pos
+                               , unsigned int tau
+                               , Langevin::CUDA::GPUSettings& gpu);
+
   Fields
   estimate_fields(Langevin::CUDA::GPUSettings& gpu);
   
@@ -56,7 +61,8 @@ namespace Langevin {
   write_stats(std::ostream& fh
             , const Fields& dle
             , unsigned int n_neighbors
-            , unsigned int retries);
+            , unsigned int retries
+            , unsigned int state);
 
 } // end Langevin::
 

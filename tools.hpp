@@ -17,6 +17,9 @@ namespace Tools {
   Dice
   initialize_dice(float seed);
   
+  unsigned int
+  rnd_state(Eigen::VectorXf weights
+          , Dice& rnd);
   
   std::vector<char>
   read_futures(std::string fname);

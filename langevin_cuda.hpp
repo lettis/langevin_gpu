@@ -86,9 +86,23 @@ namespace CUDA {
 
   //// kernel drivers ////////////
 
+  //! run CUDA kernels to identify neighbor frames
   void
   nq_neighbors(const std::vector<float>& xs
              , GPUSettings& gpu);
+
+  //! shift neighbor frames in time to find followers of neighbors,
+  //! i.e. retrieve dynamical information from neighborhood like
+  //! transition probabilities
+  void
+  nq_neighbors_timeshift(unsigned int tau
+                       , GPUSettings& gpu);
+
+  //! count number of frames per state in
+  //! (current and timeshifted) neighborhood
+  void
+  nq_count_states(GPUSettings& gpu);
+
 
   void
   nq_v_means(GPUSettings& gpu);
@@ -109,6 +123,10 @@ namespace CUDA {
 
   std::vector<float>
   get_cov(GPUSettings& gpu);
+
+  std::vector<float>
+  get_state_probs(GPUSettings& gpu);
+
 
 }} // end namespace Langevin::CUDA
 

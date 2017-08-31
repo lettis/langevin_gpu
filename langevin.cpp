@@ -16,6 +16,18 @@ namespace Langevin {
   }
 
 
+  Eigen::VectorXf
+  state_transition_probabilities(Eigen::VectorXf pos
+                               , unsigned int tau
+                               , Langevin::CUDA::GPUSettings& gpu) {
+    //TODO
+
+
+
+
+  }
+
+
   Fields
   estimate_fields(Langevin::CUDA::GPUSettings& gpu) {
     Fields dle;
@@ -133,14 +145,15 @@ namespace Langevin {
         fh << " K_" << i+1 << "_" << j+1;
       }
     }
-    fh << " pop n_retries" << std::endl;
+    fh << " pop n_retries state" << std::endl;
   }
   
   void
   write_stats(std::ostream& fh
             , const Fields& dle
             , unsigned int n_neighbors
-            , unsigned int retries) {
+            , unsigned int retries
+            , unsigned int state) {
     unsigned int n_dim = dle.drift.size();
     // write drift
     for (unsigned int i=0; i < n_dim; ++i) {
@@ -161,7 +174,9 @@ namespace Langevin {
     // write neighbor populations
     fh << " " << n_neighbors;
     // propagation retries
-    fh << " " << retries << std::endl;
+    fh << " " << retries;
+    // current state (0, if no state assigned)
+    fh << " " << state << std::endl;
   }
 
 } // end Langevin::

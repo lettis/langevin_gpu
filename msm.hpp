@@ -14,16 +14,18 @@ namespace MSM {
   struct Model {
     unsigned int n_states;
     Eigen::MatrixXf tmat;
-    std::vector<std::function<unsigned int()>> propagator;
+    unsigned int tau;
   };
 
   Model
   load_msm(std::string fname
+         , unsigned int tau
          , float rnd_seed = 0.0);
 
   unsigned int
   propagate(Model msm
-          , unsigned int state);
+          , unsigned int state
+          , Tools::Dice& rnd);
 
 } // end MSM::
 

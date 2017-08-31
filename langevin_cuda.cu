@@ -668,5 +668,12 @@ namespace CUDA {
     return cov;
   }
 
+
+  std::vector<float>
+  get_state_probs(GPUSettings& gpu) {
+    //TODO
+  }
+
+
 }} // end namespace Langevin::CUDA
 
