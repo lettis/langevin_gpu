@@ -92,14 +92,13 @@ namespace Hybrid {
                            , unsigned int& max_retries
                            , Langevin::CUDA::GPUSettings& gpu) {
     Hybrid::Frame next_frame = frame;
-    next_frame.dle.pos_prev = next_frame.dle.pos;
+    next_frame.dle.pos_prev = frame.dle.pos;
     // transition probabilities from MSM and dLE
     Eigen::VectorXf p_msm = msm.tmat.row(frame.state-1);
-
-    Eigen::VectorXf p_dle = //TODO;
-
-
-
+    Eigen::VectorXf p_dle =
+      Langevin::state_transition_probabilities(frame.dle.pos
+                                             , msm.tau
+                                             , gpu);
     // next state from MCMC sampling of combined transition probabilities
     next_frame.state = Tools::rnd_state(c*p_msm + (1-c)*p_dle
                                       , rnd);
@@ -134,9 +133,105 @@ namespace Hybrid {
     return next_frame;
   }
 
-  //TODO: continuous coupled mode
+  Hybrid::Frame
+  propagate_continuous(float c
+                     , MSM::Model msm
+                     , std::vector<unsigned int> ref_states
+                     , std::vector<std::vector<float>> ref_coords
+                     , const Hybrid::Frame& frame
+                     , Tools::Dice& rnd
+                     , unsigned int min_pop
+                     , unsigned int& max_retries
+                     , Langevin::CUDA::GPUSettings& gpu) {
+    // get transition probablities
+    Eigen::VectorXf p_msm = msm.tmat.row(frame.state-1);
+    Eigen::VectorXf p_dle =
+      Langevin::state_transition_probabilities(frame.dle.pos
+                                             , msm.tau
+                                             , gpu);
+    Eigen::VectorXf p = c*p_msm + (1-c)*p_dle;
+    // run dLE propagations
+    bool propagation_succeeded = false;
+    Hybrid::Frame next_frame = frame;
+    next_frame.dle.pos_prev = frame.dle.pos;
+    // update neighbor list / fields for dLE propagation
+    Langevin::update_neighbors(frame.dle.pos
+                             , gpu);
+    next_frame.dle.fields = Langevin::estimate_fields(gpu);
+    while ( ! propagation_succeeded) {
+      // propagate to next candidate position
+      next_frame.dle.pos = Langevin::propagate(
+          next_frame.dle
+        , rnd
+        , min_pop
+        , max_retries
+        , gpu);
+      if (next_frame.dle.pos.size() == 0) {
+        // abort, nothing worked; get new random position
+        break;
+      } else {
+        // estimate most likely state at new position
+        Eigen::VectorXf state_probs =
+          Langevin::state_probabilities(next_frame.dle.pos
+                                      , gpu);
+        // state id == index (in base 1) of max. probability
+        state_probs.maxCoeff(&next_frame.state);
+        ++next_frame.state;
+        // accept/decline propagation based on Monte Carlo decision
+        propagation_succeeded = (rnd.uniform() < p(next_frame.state));
+      }
+    }
+    // randomly chosen new frame (in same state) if not succeeded
+    if ( ! propagation_succeeded) {
+      next_frame.state = frame.state;
+      unsigned int i = rnd_index(ref_states
+                               , next_frame.state
+                               , rnd);
+      next_frame.dle.pos = Tools::to_eigen_vec(ref_coords[i]);
+    }
+    return next_frame;
+  }
 
-  //TODO: dLE-only mode
+  Hybrid::Frame
+  propagate_dle(std::vector<unsigned int> ref_states
+              , std::vector<std::vector<float>> ref_coords
+              , const Hybrid::Frame& frame
+              , Tools::Dice& rnd
+              , unsigned int min_pop
+              , unsigned int& max_retries
+              , Langevin::CUDA::GPUSettings& gpu) {
+    // run dLE propagations
+    Hybrid::Frame next_frame = frame;
+    next_frame.dle.pos_prev = frame.dle.pos;
+    // update neighbor list / fields for dLE propagation
+    Langevin::update_neighbors(frame.dle.pos
+                             , gpu);
+    next_frame.dle.fields = Langevin::estimate_fields(gpu);
+    // propagate to next candidate position
+    next_frame.dle.pos = Langevin::propagate(
+        next_frame.dle
+      , rnd
+      , min_pop
+      , max_retries
+      , gpu);
+    if (next_frame.dle.pos.size() == 0) {
+      // propagation failed: randomly choose new frame in same state
+      next_frame.state = frame.state;
+      unsigned int i = rnd_index(ref_states
+                               , next_frame.state
+                               , rnd);
+      next_frame.dle.pos = Tools::to_eigen_vec(ref_coords[i]);
+    } else {
+      // propagation succeeded: get most likely state from environment
+      Eigen::VectorXf state_probs =
+        Langevin::state_probabilities(next_frame.dle.pos
+                                    , gpu);
+      // state id == index (in base 1) of max. probability
+      state_probs.maxCoeff(&next_frame.state);
+      ++next_frame.state;
+    }
+    return next_frame;
+  }
 
 } // end namespace Hybrid::
 

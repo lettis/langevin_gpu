@@ -19,8 +19,7 @@ namespace MSM {
 
   Model
   load_msm(std::string fname
-         , unsigned int tau
-         , float rnd_seed = 0.0);
+         , unsigned int tau);
 
   unsigned int
   propagate(Model msm

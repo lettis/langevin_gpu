@@ -15,18 +15,40 @@ namespace Langevin {
     return Langevin::CUDA::get_n_neighbors(gpu);
   }
 
-
   Eigen::VectorXf
   state_transition_probabilities(Eigen::VectorXf pos
                                , unsigned int tau
                                , Langevin::CUDA::GPUSettings& gpu) {
-    //TODO
-
-
-
-
+    // compute neighborhood
+    Langevin::CUDA::nq_neighbors(Tools::to_stl_vec(pos)
+                               , gpu);
+    // set timeshift on neighbors
+    Langevin::CUDA::nq_neighbors_timeshift(tau
+                                         , gpu);
+    // compute state counts, i.e. how many (timeshifted) neighbors
+    // are found in the states
+    Langevin::CUDA::nq_count_states(gpu
+                                  , true);
+    // get transition probabilities from timeshifted state count
+    std::vector<float> trans_probs = Langevin::CUDA::get_state_probs(gpu
+                                                                   , true);
+    return Tools::to_eigen_vec(trans_probs);
   }
 
+  Eigen::VectorXf
+  state_probabilities(Eigen::VectorXf pos
+                    , Langevin::CUDA::GPUSettings& gpu) {
+    // compute neighborhood
+    Langevin::CUDA::nq_neighbors(Tools::to_stl_vec(pos)
+                               , gpu);
+    // compute state counts (without timeshift)
+    Langevin::CUDA::nq_count_states(gpu
+                                  , false);
+    // get state probabilities (without timeshift)
+    std::vector<float> state_probs = Langevin::CUDA::get_state_probs(gpu
+                                                                   , false);
+    return Tools::to_eigen_vec(state_probs);
+  }
 
   Fields
   estimate_fields(Langevin::CUDA::GPUSettings& gpu) {
@@ -58,7 +80,6 @@ namespace Langevin {
         Langevin::CUDA::get_cov(gpu)
       , true);
   
-  
     // friction
     dle.friction = -1.0 * (cov_fwd_bwd * cov_bwd_bwd.inverse());
     // drift
@@ -74,7 +95,6 @@ namespace Langevin {
     dle.diffusion = Eigen::LLT<Eigen::MatrixXf>(dle.diffusion).matrixL();
     return dle;
   }
-  
   
   Eigen::VectorXf
   euler_integration(Langevin::Frame frame
@@ -121,10 +141,6 @@ namespace Langevin {
     }
     return pos_new;
   }
-  
-  
-  
-  
   
   void
   write_stats_header(std::ostream& fh

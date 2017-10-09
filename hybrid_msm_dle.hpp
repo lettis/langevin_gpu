@@ -42,14 +42,25 @@ namespace Hybrid {
                            , unsigned int& max_retries
                            , Langevin::CUDA::GPUSettings& gpu);
 
-/*
-  Frame
-  propagate_continuous(Langevin::CUDA::GPUSettings& gpu
-                     , const Eigen::MatrixXf msm
-                     , const Frame& frame
-                     , float c
-                     , Tools::Dice& rnd);
-*/
+  Hybrid::Frame
+  propagate_continuous(float c
+                     , MSM::Model msm
+                     , std::vector<unsigned int> ref_states
+                     , std::vector<std::vector<float>> ref_coords
+                     , const Hybrid::Frame& frame
+                     , Tools::Dice& rnd
+                     , unsigned int min_pop
+                     , unsigned int& max_retries
+                     , Langevin::CUDA::GPUSettings& gpu);
+
+  Hybrid::Frame
+  propagate_dle(std::vector<unsigned int> ref_states
+              , std::vector<std::vector<float>> ref_coords
+              , const Hybrid::Frame& frame
+              , Tools::Dice& rnd
+              , unsigned int min_pop
+              , unsigned int& max_retries
+              , Langevin::CUDA::GPUSettings& gpu);
 
 } // end namespace Hybrid::
 

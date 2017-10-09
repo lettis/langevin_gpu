@@ -99,9 +99,10 @@ namespace CUDA {
                        , GPUSettings& gpu);
 
   //! count number of frames per state in
-  //! (current and timeshifted) neighborhood
+  //! (current or timeshifted) neighborhood
   void
-  nq_count_states(GPUSettings& gpu);
+  nq_count_states(GPUSettings& gpu
+                , bool timeshifted);
 
 
   void
@@ -125,7 +126,8 @@ namespace CUDA {
   get_cov(GPUSettings& gpu);
 
   std::vector<float>
-  get_state_probs(GPUSettings& gpu);
+  get_state_probs(GPUSettings& gpu
+                , bool timeshifted);
 
 
 }} // end namespace Langevin::CUDA

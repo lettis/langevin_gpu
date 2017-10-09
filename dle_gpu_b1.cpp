@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
     ("tmat,t", b_po::value<std::string>()->required(),
      "input (required): MSM transition probability (row-normalized,"
      " i.e. T_{ij} encodes transition from i to j.")
-    ("tau,T", b_po::value<unsigned int>,
+    ("tau,T", b_po::value<unsigned int>(),
      "input: lagtime of MSM process [no. of frames]. default: 1")
     ("length,L", b_po::value<unsigned int>()->required(),
      "input (required): length of simulated trajectory")
@@ -184,8 +184,7 @@ int main(int argc, char* argv[]) {
     states = Tools::read_states(args["states"].as<std::string>());
     // input (msm)
     msm = MSM::load_msm(args["tmat"].as<std::string>()
-                      , args["tau"].as<unsigned int>()
-                      , rnd_seed);
+                      , args["tau"].as<unsigned int>());
     // prepare output file (or stdout)
     fname_out = args["output"].as<std::string>();
     fh_out = CoordsFile::open(fname_out, "w");
@@ -231,23 +230,61 @@ int main(int argc, char* argv[]) {
   frame.i_traj = 1;
   for (unsigned int i_frame=0; i_frame < propagation_length; ++i_frame) {
     unsigned int retries = max_dle_retries;
-    // new frame from uncoupled model
-    frame = Hybrid::propagate_discrete_uncoupled(msm
+    // get new frame, depending on propagation model
+    switch(mode){
+     case UNCOUPLED:
+      frame = Hybrid::propagate_discrete_uncoupled(msm
+                                                 , states
+                                                 , ref_coords
+                                                 , frame
+                                                 , rnd
+                                                 , min_pop
+                                                 , retries
+                                                 , gpu);
+      break;
+     case COUPLED_DISCRETE:
+      frame = Hybrid::propagate_discrete_coupled(coupling_constant
+                                               , msm
                                                , states
                                                , ref_coords
                                                , frame
                                                , rnd
                                                , min_pop
                                                , retries
-                                               , gpu);
-    retries = max_dle_retries - retries;
+                                               , gpu); 
+      break;
+     case COUPLED_CONTINUOUS:
+      frame = Hybrid::propagate_continuous(coupling_constant
+                                         , msm
+                                         , states
+                                         , ref_coords
+                                         , frame
+                                         , rnd
+                                         , min_pop
+                                         , retries
+                                         , gpu); 
+      break;
+     case DLE_ONLY:
+      frame = Hybrid::propagate_dle(states
+                                  , ref_coords
+                                  , frame
+                                  , rnd
+                                  , min_pop
+                                  , retries
+                                  , gpu); 
+      break;
+     case UNKNOWN_MODE:
+     default:
+      std::cerr << "error: cannot propagate using unknown mode" << std::endl;
+      exit(EXIT_FAILURE);
+    }
     // output: position
     fh_out->write(Tools::to_stl_vec(frame.dle.pos));
     // output: stats
     Langevin::write_stats(fh_stats
                         , frame.dle.fields
                         , gpu.n_neighbors
-                        , retries
+                        , max_dle_retries - retries
                         , frame.state);
   }
   // cleanup

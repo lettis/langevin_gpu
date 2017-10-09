@@ -9,8 +9,7 @@ namespace MSM {
 
   Model
   load_msm(std::string fname
-         , unsigned int tau
-         , float rnd_seed) {
+         , unsigned int tau) {
     // load transition matrix data
     std::vector<float> buf = Tools::read_datafile<float>(fname);
     unsigned int dim = std::sqrt(buf.size());
@@ -37,6 +36,4 @@ namespace MSM {
   }
 
 } // end MSM::
-
-
 

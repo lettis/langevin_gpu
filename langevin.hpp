@@ -32,10 +32,16 @@ namespace Langevin {
   update_neighbors(Eigen::VectorXf pos
                  , Langevin::CUDA::GPUSettings& gpu);
   
+  // probabilities to go to a certain state
   Eigen::VectorXf
   state_transition_probabilities(Eigen::VectorXf pos
                                , unsigned int tau
                                , Langevin::CUDA::GPUSettings& gpu);
+
+  // probabilities to be in a certain state
+  Eigen::VectorXf
+  state_probabilities(Eigen::VectorXf pos
+                    , Langevin::CUDA::GPUSettings& gpu);
 
   Fields
   estimate_fields(Langevin::CUDA::GPUSettings& gpu);

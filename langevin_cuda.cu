@@ -537,6 +537,31 @@ namespace CUDA {
   }
 
   void
+  nq_count_states(GPUSettings& gpu
+                , bool timeshifted) {
+    if (timeshifted) {
+      count_states_krnl
+      <<< n_blocks(gpu.n_frames
+                 , BSIZE)
+        , BSIZE >>> (gpu.states
+                   , gpu.is_neighbor_timeshift
+                   , gpu.n_frames
+                   , gpu.state_count_timeshift);
+      check_error("kernel exec: count_states_krnl (timeshifted)");
+    } else {
+      // kernel call: count states
+      count_states_krnl
+      <<< n_blocks(gpu.n_frames
+                 , BSIZE)
+        , BSIZE >>> (gpu.states
+                   , gpu.is_neighbor
+                   , gpu.n_frames
+                   , gpu.state_count);
+      check_error("kernel exec: count_states_krnl");
+    }
+  }
+
+  void
   nq_v_means(GPUSettings& gpu) {
     // reset v_means
     cudaMemsetAsync(gpu.v_means
@@ -668,12 +693,30 @@ namespace CUDA {
     return cov;
   }
 
-
   std::vector<float>
-  get_state_probs(GPUSettings& gpu) {
-    //TODO
+  get_state_probs(GPUSettings& gpu
+                , bool timeshifted) {
+    std::vector<unsigned int> counts(gpu.n_states);
+    if (timeshifted) {
+      cudaMemcpy(counts.data()
+               , gpu.state_count_timeshift
+               , sizeof(unsigned int) * gpu.n_states
+               , cudaMemcpyDeviceToHost);
+    } else {
+      cudaMemcpy(counts.data()
+               , gpu.state_count
+               , sizeof(unsigned int) * gpu.n_states
+               , cudaMemcpyDeviceToHost);
+    }
+    std::vector<float> probs(gpu.n_states);
+    std::transform(counts.begin()
+                 , counts.end()
+                 , probs.begin()
+                 , [&] (unsigned int n) -> float {
+                     return ((float) n) / gpu.n_neighbors;
+                   });
+    return probs;
   }
-
 
 }} // end namespace Langevin::CUDA
 
