@@ -10,16 +10,17 @@ namespace Hybrid {
   rnd_index(std::vector<unsigned int> states
           , unsigned int selected_state
           , Tools::Dice& rnd) {
-    // construct index list (base 1)
+    // construct index list
     std::vector<unsigned int> indices(states.size());
     std::iota(indices.begin()
             , indices.end()
             , 0);
-    // remove indices of unselected states
+    // remove indices of other (i.e. not selected) states
     indices.erase(std::remove_if(indices.begin()
                                , indices.end()
-                               , [selected_state](unsigned int s) -> bool {
-                                   return (s != selected_state);
+                               , [selected_state
+                                , &states](unsigned int i) -> bool {
+                                   return (states[i] != selected_state);
                                  })
                 , indices.end());
     if (indices.size() == 0) {
@@ -29,8 +30,10 @@ namespace Hybrid {
                 << std::endl;
       exit(EXIT_FAILURE);
     }
+std::cerr << "rnd_index: size " << indices.size() << std::endl;
     // select random index
-    unsigned int i = ((unsigned int) rnd.uniform() * (indices.size()-1));
+    unsigned int i = (unsigned int) (rnd.uniform() * (indices.size()-1));
+std::cerr << "rnd_index: i " << i << std::endl;
     return indices[i];
   }
 
@@ -200,36 +203,66 @@ namespace Hybrid {
               , unsigned int min_pop
               , unsigned int& max_retries
               , Langevin::CUDA::GPUSettings& gpu) {
+    unsigned int max_retries_per_run = max_retries;
+    unsigned int retries_total = 0;
     // run dLE propagations
     Hybrid::Frame next_frame = frame;
     next_frame.dle.pos_prev = frame.dle.pos;
     // update neighbor list / fields for dLE propagation
-    Langevin::update_neighbors(frame.dle.pos
+    Langevin::update_neighbors(next_frame.dle.pos
                              , gpu);
     next_frame.dle.fields = Langevin::estimate_fields(gpu);
     // propagate to next candidate position
-    next_frame.dle.pos = Langevin::propagate(
-        next_frame.dle
-      , rnd
-      , min_pop
-      , max_retries
-      , gpu);
-    if (next_frame.dle.pos.size() == 0) {
-      // propagation failed: randomly choose new frame in same state
-      next_frame.state = frame.state;
-      unsigned int i = rnd_index(ref_states
-                               , next_frame.state
-                               , rnd);
-      next_frame.dle.pos = Tools::to_eigen_vec(ref_coords[i]);
-    } else {
-      // propagation succeeded: get most likely state from environment
-      Eigen::VectorXf state_probs =
-        Langevin::state_probabilities(next_frame.dle.pos
-                                    , gpu);
-      // state id == index (in base 1) of max. probability
-      state_probs.maxCoeff(&next_frame.state);
-      ++next_frame.state;
+    Eigen::VectorXf pos_new = {};
+    while (pos_new.size() == 0) {
+      pos_new = Langevin::propagate(next_frame.dle
+                                  , rnd
+                                  , min_pop
+                                  , max_retries
+                                  , gpu);
+      retries_total += max_retries;
+      max_retries = max_retries_per_run;
+      if (pos_new.size() == 0) {
+        std::cerr << "no propagation possible."
+                  << " restarting langevin at new position."
+                  << std::endl;
+
+
+        std::cerr << "new max_retries: " << max_retries << std::endl;
+
+        // propagation failed: randomly choose new frame in same state
+        unsigned int i = rnd_index(ref_states
+                                 , next_frame.state
+                                 , rnd);
+
+        std::cerr << "new index: " << i << std::endl;
+
+
+        next_frame.dle.pos = Tools::to_eigen_vec(ref_coords[i]);
+
+        std::cerr << "new pos: ";
+        for (float x: Tools::to_stl_vec(next_frame.dle.pos)) {
+          std::cerr << " " << x;
+        }
+        std::cerr << std::endl;
+
+        next_frame.dle.pos_prev = next_frame.dle.pos;
+        // recalculate neighborhood and fields at new position
+        Langevin::update_neighbors(next_frame.dle.pos
+                                 , gpu);
+        next_frame.dle.fields = Langevin::estimate_fields(gpu);
+      }
     }
+    // save total number of retries
+    max_retries = retries_total;
+    // save new position
+    next_frame.dle.pos = pos_new;
+    // get most likely state from environment
+    Eigen::VectorXf state_probs = Langevin::state_probabilities(pos_new
+                                                              , gpu);
+    // state id == index (in base 1) of max. probability
+    state_probs.maxCoeff(&next_frame.state);
+    ++next_frame.state;
     return next_frame;
   }
 
