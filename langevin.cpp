@@ -161,7 +161,7 @@ namespace Langevin {
         fh << " K_" << i+1 << "_" << j+1;
       }
     }
-    fh << " pop n_retries state" << std::endl;
+    fh << " pop n_retries state i_traj" << std::endl;
   }
   
   void
@@ -169,7 +169,8 @@ namespace Langevin {
             , const Fields& dle
             , unsigned int n_neighbors
             , unsigned int retries
-            , unsigned int state) {
+            , unsigned int state
+            , unsigned int i_traj) {
     unsigned int n_dim = dle.drift.size();
     // write drift
     for (unsigned int i=0; i < n_dim; ++i) {
@@ -192,7 +193,9 @@ namespace Langevin {
     // propagation retries
     fh << " " << retries;
     // current state (0, if no state assigned)
-    fh << " " << state << std::endl;
+    fh << " " << state;
+    // index of current trajectory (i.e. continuously sampled data)
+    fh << " " << i_traj << std::endl;
   }
 
 } // end Langevin::

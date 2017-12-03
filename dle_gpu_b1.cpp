@@ -285,7 +285,8 @@ int main(int argc, char* argv[]) {
                         , frame.dle.fields
                         , gpu.n_neighbors
                         , max_dle_retries - retries
-                        , frame.state);
+                        , frame.state
+                        , frame.i_traj);
   }
   // cleanup
   Langevin::CUDA::clear_gpu(gpu);

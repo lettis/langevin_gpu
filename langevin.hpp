@@ -68,7 +68,8 @@ namespace Langevin {
             , const Fields& dle
             , unsigned int n_neighbors
             , unsigned int retries
-            , unsigned int state);
+            , unsigned int state
+            , unsigned int i_traj);
 
 } // end Langevin::
 
